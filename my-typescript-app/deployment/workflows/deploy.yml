@@ -1,0 +1,50 @@
+name: Deploy Application
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '14'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build application
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Deploy to Kubernetes
+        uses: azure/setup-kubectl@v1
+        with:
+          version: 'latest'
+
+      - name: Set up Kubernetes context
+        run: kubectl config set-context --current --namespace=my-namespace
+
+      - name: Apply Kubernetes deployment
+        run: kubectl apply -f deployment/kubernetes/deployment.yaml
+
+      - name: Apply Kubernetes service
+        run: kubectl apply -f deployment/kubernetes/service.yaml
