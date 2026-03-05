@@ -1,34 +1,44 @@
 import { PrismaClient } from "@prisma/client";
+import { withAccelerate } from "@prisma/extension-accelerate";
 
 const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
+  prisma: ReturnType<typeof createPrismaClient> | undefined;
 };
 
-/** Ensure Supabase pooler uses transaction mode (6543) + pgbouncer params to avoid "prepared statement already exists". */
-function getDatasourceUrl(): string | undefined {
-  const u = process.env.DATABASE_URL;
-  if (!u) return undefined;
-  if (!u.includes("pooler.supabase.com")) return u;
-  // Force port 6543 (transaction mode); 5432 = session mode, causes prepared-statement collisions
-  let base = u.split("?")[0];
-  if (base.includes(":5432/")) base = base.replace(":5432/", ":6543/");
-  const existingParams = u.includes("?") ? u.split("?")[1] : "";
-  const params = new URLSearchParams(existingParams);
-  params.set("pgbouncer", "true");
-  params.set("connection_limit", "1");
-  if (!params.has("sslmode")) params.set("sslmode", "require");
-  return `${base}?${params.toString()}`;
-}
+function createPrismaClient() {
+  const url = process.env.DATABASE_URL;
+  const useAccelerate = url?.startsWith("prisma://");
 
-const datasourceUrl = getDatasourceUrl();
+  if (useAccelerate && url) {
+    const Client = PrismaClient as unknown as new (opts: { log?: string[]; accelerateUrl: string }) => InstanceType<typeof PrismaClient>;
+    return new Client({ log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"], accelerateUrl: url }).$extends(withAccelerate()) as unknown as PrismaClient;
+  }
 
-export const db =
-  globalForPrisma.prisma ??
-  new PrismaClient({
+  // Supabase pooler: force transaction mode (6543) + pgbouncer params
+  let datasourceUrl = url;
+  if (url?.includes("pooler.supabase.com")) {
+    let base = url.split("?")[0];
+    if (base.includes(":5432/")) base = base.replace(":5432/", ":6543/");
+    const params = new URLSearchParams(url.includes("?") ? url.split("?")[1] : "");
+    params.set("pgbouncer", "true");
+    params.set("connection_limit", "1");
+    if (!params.has("sslmode")) params.set("sslmode", "require");
+    datasourceUrl = `${base}?${params.toString()}`;
+  }
+
+  return new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
     ...(datasourceUrl && { datasources: { db: { url: datasourceUrl } } }),
   });
+}
 
-if (process.env.NODE_ENV !== "production") {
+// When using Accelerate (prisma://), never cache in production - avoids stale client from prior deployments
+const useAccelerate = process.env.DATABASE_URL?.startsWith("prisma://");
+const shouldCache = process.env.NODE_ENV !== "production" || !useAccelerate;
+
+export const db: PrismaClient =
+  shouldCache && globalForPrisma.prisma ? globalForPrisma.prisma : createPrismaClient();
+
+if (shouldCache) {
   globalForPrisma.prisma = db;
 }
