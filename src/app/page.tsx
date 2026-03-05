@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { getSession, hasCompletedSetup } from "@/lib/auth";
 import { AuthActions } from "@/components/AuthActions";
 import SetupRedirect from "@/components/SetupRedirect";
+
+export const dynamic = "force-dynamic";
 
 export default async function Home() {
   let session;
