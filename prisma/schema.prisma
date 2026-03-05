@@ -1,0 +1,271 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CompanyRole {
+  OWNER
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum AgentType {
+  AI_SETUP
+  SIGNAL_RISK
+}
+
+enum AccessScope {
+  SELF_ONLY
+  COMPANY_ALL
+}
+
+enum SessionStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+enum RiskSeverity {
+  MINOR
+  MODERATE
+  SEVERE
+  CRITICAL
+}
+
+enum ScenarioRecommendation {
+  RECOMMENDED
+  FALLBACK
+  ALTERNATE
+}
+
+model User {
+  id             String            @id @default(cuid())
+  externalAuthId String?           @unique
+  email          String            @unique
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  companies      UserCompanyRole[]
+}
+
+model Company {
+  id               String                 @id @default(cuid())
+  key              String                 @unique
+  name             String
+  setupCompleted   Boolean                @default(false)
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  users            UserCompanyRole[]
+  baseProfile      CompanyProfileBase?
+  highLevelProfile CompanyProfileHighLevel?
+  integrations     IntegrationConnection[]
+  overridePolicies OverridePolicy[]
+  memoryThreads    MemoryThread[]
+  agentSessions    AgentSession[]
+  riskCases        RiskCase[]
+  playbookEntries  PlaybookEntry[]
+}
+
+model UserCompanyRole {
+  id        String      @id @default(cuid())
+  userId    String
+  companyId String
+  role      CompanyRole
+  createdAt DateTime    @default(now())
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company   Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+}
+
+model CompanyProfileBase {
+  id                String   @id @default(cuid())
+  companyId         String   @unique
+  sector            String?
+  companyType       String?
+  sizeBand          String?
+  industryStance    String?
+  supplyChainMap    Json?
+  stakeholderMap    Json?
+  assumptions       Json?
+  rawInput          String?
+  generatedSummary  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model CompanyProfileHighLevel {
+  id                        String   @id @default(cuid())
+  companyId                 String   @unique
+  existingRiskAnalysis      Json?
+  leadTimeSensitivity       Json?
+  inventoryBufferPolicies   Json?
+  contractStructures        Json?
+  customerSlaProfile        Json?
+  erpSignalMonitoring       Json?
+  generatedNarrative        String?
+  warningSummary            String?
+  confidenceScore           String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+  company                   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model IntegrationConnection {
+  id              String   @id @default(cuid())
+  companyId       String
+  provider        String
+  status          String
+  authType        String
+  metadata        Json?
+  connectedAt     DateTime @default(now())
+  lastSyncAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, provider])
+  @@index([companyId, provider])
+}
+
+model MemoryThread {
+  id                String      @id @default(cuid())
+  companyId         String
+  agentType         AgentType
+  accessScope       AccessScope
+  backboardAssistantId String
+  backboardThreadId String
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  company           Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, agentType])
+}
+
+model AgentSession {
+  id             String          @id @default(cuid())
+  companyId      String
+  agentType      AgentType
+  status         SessionStatus
+  startedAt      DateTime        @default(now())
+  endedAt        DateTime?
+  metadata       Json?
+  traces         ReasoningTrace[]
+  riskCases      RiskCase[]
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, agentType, startedAt])
+}
+
+model ReasoningTrace {
+  id            String       @id @default(cuid())
+  companyId     String
+  sessionId     String
+  stepKey       String
+  stepTitle     String
+  rationale     String
+  evidencePack  Json?
+  assumptions   Json?
+  confidence    String?
+  createdAt     DateTime     @default(now())
+  session       AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, sessionId, createdAt])
+}
+
+model RiskCase {
+  id                    String        @id @default(cuid())
+  companyId             String
+  sessionId             String
+  triggerType           String
+  entityMap             Json
+  timeWindow            Json
+  evidencePack          Json
+  assumptions           Json
+  constraints           Json
+  probabilityPoint      Float?
+  probabilityBandLow    Float?
+  probabilityBandHigh   Float?
+  confidenceLevel       String?
+  severity              RiskSeverity?
+  serviceImpact         Json?
+  financialImpact       Json?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  company               Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  session               AgentSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  scenarios             Scenario[]
+  mitigationPlans       MitigationPlan[]
+
+  @@index([companyId, createdAt])
+}
+
+model Scenario {
+  id                 String                  @id @default(cuid())
+  riskCaseId         String
+  name               String
+  recommendation     ScenarioRecommendation
+  costDelta          Float?
+  serviceImpact      Float?
+  riskReduction      Float?
+  timeToImplementHrs Int?
+  confidenceLevel    String?
+  assumptions        Json?
+  createdAt          DateTime                @default(now())
+  riskCase           RiskCase                @relation(fields: [riskCaseId], references: [id], onDelete: Cascade)
+
+  @@index([riskCaseId, recommendation])
+}
+
+model MitigationPlan {
+  id              String   @id @default(cuid())
+  companyId       String
+  riskCaseId      String
+  scenarioId      String?
+  owner           String?
+  status          String
+  actions         Json
+  executionMode   String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  riskCase        RiskCase @relation(fields: [riskCaseId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status])
+}
+
+model OverridePolicy {
+  id                    String   @id @default(cuid())
+  companyId             String
+  name                  String
+  revenueAtRiskLimit    Float?
+  otifFloor             Float?
+  probabilityThreshold  Float?
+  autoExecuteEnabled    Boolean  @default(false)
+  rules                 Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  company               Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+model PlaybookEntry {
+  id                String   @id @default(cuid())
+  companyId         String
+  incidentClass     String
+  predictedOutcome  Json
+  actualOutcome     Json
+  effectiveness     Json
+  learnings         Json
+  createdAt         DateTime @default(now())
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, incidentClass])
+}
