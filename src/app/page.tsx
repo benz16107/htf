@@ -5,9 +5,15 @@ import { AuthActions } from "@/components/AuthActions";
 import SetupRedirect from "@/components/SetupRedirect";
 
 export default async function Home() {
-  const session = await getSession();
-  const setupComplete = await hasCompletedSetup();
-
+  let session;
+  let setupComplete;
+  try {
+    session = await getSession();
+    setupComplete = await hasCompletedSetup();
+  } catch (e) {
+    console.error("[Home] Error:", e);
+    throw e;
+  }
 
   return (
     <>
