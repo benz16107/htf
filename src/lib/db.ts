@@ -10,8 +10,10 @@ function createPrismaClient() {
   const useAccelerate = url?.startsWith("prisma://");
 
   if (useAccelerate && url) {
-    const Client = PrismaClient as unknown as new (opts: { log?: string[]; accelerateUrl: string }) => InstanceType<typeof PrismaClient>;
-    return new Client({ log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"], accelerateUrl: url }).$extends(withAccelerate()) as unknown as PrismaClient;
+    // Prisma 6 doesn't support accelerateUrl in constructor; extension uses DATABASE_URL from env
+    return new PrismaClient({
+      log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    }).$extends(withAccelerate()) as unknown as PrismaClient;
   }
 
   // Supabase pooler: force transaction mode (6543) + pgbouncer params
