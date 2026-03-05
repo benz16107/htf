@@ -1,46 +1,44 @@
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { withAccelerate } from "@prisma/extension-accelerate";
 
 const globalForPrisma = globalThis as unknown as {
-  prisma: ReturnType<typeof createPrismaClient> | undefined;
+  prisma: PrismaClient | undefined;
 };
 
-function createPrismaClient() {
+function createPrismaClient(): PrismaClient {
   const url =
-    process.env.RUNTIME_DATABASE_URL ||
-    process.env.DATABASE_URL;
-  const useAccelerate = url?.startsWith("prisma://");
+    process.env.RUNTIME_DATABASE_URL || process.env.DATABASE_URL;
 
-  if (useAccelerate && url) {
+  if (url?.startsWith("prisma://")) {
     return new PrismaClient({
       log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
     }).$extends(withAccelerate()) as unknown as PrismaClient;
   }
 
-  let datasourceUrl = url;
-  if (url?.includes("pooler.supabase.com") || url?.includes("pgbouncer=true")) {
-    const [base, qs] = url!.split("?");
-    const params = new URLSearchParams(qs ?? "");
-    params.set("pgbouncer", "true");
-    params.set("connection_limit", "1");
-    if (!params.has("sslmode")) params.set("sslmode", "require");
-    datasourceUrl = `${base}?${params.toString()}`;
+  if (url?.includes("pooler.supabase.com") || url?.includes(":6543/")) {
+    const adapter = new PrismaPg({ connectionString: url });
+    return new PrismaClient({
+      adapter,
+      log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    });
   }
 
   return new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
-    ...(datasourceUrl && { datasources: { db: { url: datasourceUrl } } }),
+    ...(url && { datasources: { db: { url } } }),
   });
 }
 
 const runtimeUrl =
-  process.env.RUNTIME_DATABASE_URL ||
-  process.env.DATABASE_URL;
+  process.env.RUNTIME_DATABASE_URL || process.env.DATABASE_URL;
 const useAccelerate = runtimeUrl?.startsWith("prisma://");
 const shouldCache = process.env.NODE_ENV !== "production" || !useAccelerate;
 
 export const db: PrismaClient =
-  shouldCache && globalForPrisma.prisma ? globalForPrisma.prisma : createPrismaClient();
+  shouldCache && globalForPrisma.prisma
+    ? globalForPrisma.prisma
+    : createPrismaClient();
 
 if (shouldCache) {
   globalForPrisma.prisma = db;
