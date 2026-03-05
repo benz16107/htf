@@ -6,7 +6,10 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient() {
-  const url = process.env.DATABASE_URL;
+  const url =
+    process.env.RUNTIME_DATABASE_URL ||
+    process.env.DIRECT_DATABASE_URL ||
+    process.env.DATABASE_URL;
   const useAccelerate = url?.startsWith("prisma://");
 
   if (useAccelerate && url) {
@@ -35,7 +38,11 @@ function createPrismaClient() {
 }
 
 // When using Accelerate (prisma://), never cache in production - avoids stale client from prior deployments
-const useAccelerate = process.env.DATABASE_URL?.startsWith("prisma://");
+const runtimeUrl =
+  process.env.RUNTIME_DATABASE_URL ||
+  process.env.DIRECT_DATABASE_URL ||
+  process.env.DATABASE_URL;
+const useAccelerate = runtimeUrl?.startsWith("prisma://");
 const shouldCache = process.env.NODE_ENV !== "production" || !useAccelerate;
 
 export const db: PrismaClient =
