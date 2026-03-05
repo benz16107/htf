@@ -51,7 +51,8 @@ Visit http://localhost:3000.
 1. **Push to GitHub** and import the repo in [Vercel](https://vercel.com). Vercel will detect Next.js and use `npm run build` (Prisma client is generated via `postinstall`).
 
 2. **Production database**  
-   Create a Postgres database (e.g. [Neon](https://neon.tech), [Supabase](https://supabase.com), or [Vercel Postgres](https://vercel.com/storage/postgres)), then set `DATABASE_URL` in the Vercel project **Environment Variables**.
+   Create a Postgres database (e.g. [Neon](https://neon.tech), [Supabase](https://supabase.com), or [Vercel Postgres](https://vercel.com/storage/postgres)), then set `DATABASE_URL` in the Vercel project **Environment Variables**.  
+   If you see `prepared statement "s1" already exists` with Supabase on Vercel, use **Prisma Accelerate**: sign up at [console.prisma.io](https://console.prisma.io), add your Supabase URL, enable Accelerate, and set `DATABASE_URL` to the `prisma://accelerate.prisma-data.net/?api_key=...` URL.
 
 3. **Run migrations** against the production DB (once):
    ```bash
