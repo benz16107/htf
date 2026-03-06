@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { getRequestOrigin } from "@/lib/request-origin";
 
 const sectionKeys = [
   "riskClassification",
@@ -44,12 +45,14 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const session = await getSession();
+  const origin = getRequestOrigin(request);
 
   if (!session?.companyId) {
-    return NextResponse.redirect(new URL("/setup/baselayer", request.url));
+    return NextResponse.redirect(new URL("/setup/baselayer", origin));
   }
 
   const formData = await request.formData();
+  const redirectTo = formData.get("redirectTo")?.toString();
 
   const values = formData
     .getAll("sections")
@@ -112,5 +115,6 @@ export async function POST(request: Request) {
     },
   });
 
-  return NextResponse.redirect(new URL("/setup/review", request.url));
+  const nextUrl = redirectTo === "dashboard" ? "/dashboard" : "/setup/review";
+  return NextResponse.redirect(new URL(nextUrl, origin));
 }

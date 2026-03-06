@@ -1,8 +1,9 @@
 import { db } from "@/lib/db";
+import { getZapierMCPToolSelections } from "@/server/zapier/mcp-config";
 
 type SetupSnapshot = {
   baselayer: Record<string, string> | null;
-  integrations: { connectors: string[] };
+  integrations: { inputContextTools: string[]; executionTools: string[]; connectors: string[] };
   highLevel: Record<string, string> | null;
 };
 
@@ -21,7 +22,7 @@ function extractJsonSummary(input: unknown): string {
 export async function getCompanySetupSnapshot(
   companyId: string,
 ): Promise<SetupSnapshot> {
-  const [company, base, highLevel, integrations] = await Promise.all([
+  const [company, base, highLevel, toolSelections] = await Promise.all([
     db.company.findUnique({
       where: { id: companyId },
       select: { name: true },
@@ -32,12 +33,12 @@ export async function getCompanySetupSnapshot(
     db.companyProfileHighLevel.findUnique({
       where: { companyId },
     }),
-    db.integrationConnection.findMany({
-      where: { companyId },
-      orderBy: { provider: "asc" },
-      select: { provider: true },
-    }),
+    getZapierMCPToolSelections(companyId),
   ]);
+
+  const allConnectors = [
+    ...new Set([...toolSelections.inputContextTools, ...toolSelections.executionTools]),
+  ];
 
   return {
     baselayer: base
@@ -50,7 +51,9 @@ export async function getCompanySetupSnapshot(
         }
       : null,
     integrations: {
-      connectors: integrations.map((item: { provider: string }) => item.provider),
+      inputContextTools: toolSelections.inputContextTools,
+      executionTools: toolSelections.executionTools,
+      connectors: allConnectors,
     },
     highLevel: highLevel
       ? {

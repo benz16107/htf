@@ -1,64 +1,65 @@
 import { AppHeader } from "@/components/AppHeader";
+import { DeleteAccountSection } from "@/components/DeleteAccountSection";
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getCompanySetupSnapshot } from "@/server/company-setup";
 
 export default async function ProfilePage() {
   const session = await getSession();
+  if (!session) redirect("/sign-in");
 
-  if (!session) {
-    redirect("/sign-in");
-  }
-
-  const setupSnapshot = session.companyId
+  const snapshot = session.companyId
     ? await getCompanySetupSnapshot(session.companyId)
-    : {
-        baselayer: null,
-        integrations: { connectors: [] },
-        highLevel: null,
-      };
+    : { baselayer: null, integrations: { inputContextTools: [], executionTools: [], connectors: [] }, highLevel: null };
 
   return (
-    <main className="container stack">
-      <AppHeader
-        title="Company Profile"
-        subtitle="Review and update base/high-level setup information"
-      />
+    <main className="container stack-xl">
+      <AppHeader title="Company Profile" subtitle="Review and update your setup information." />
 
       <section className="card stack">
         <h3>Identity</h3>
-        <p className="muted">Company account: {session?.email}</p>
-        <p className="muted">Company ID: {session?.companyId}</p>
-        <p className="muted">Account type: Company owner</p>
+        <div className="stack-sm">
+          <div className="list-row"><span className="muted text-sm">Email</span><span className="text-sm">{session.email}</span></div>
+          <div className="list-row"><span className="muted text-sm">Company ID</span><span className="text-sm">{session.companyId || "—"}</span></div>
+          <div className="list-row"><span className="muted text-sm">Role</span><span className="text-sm">Owner</span></div>
+        </div>
       </section>
 
-      <section className="grid two">
+      <section className="grid two" style={{ alignItems: "start" }}>
         <article className="card stack">
-          <h3>Baselayer profile</h3>
-          {setupSnapshot.baselayer ? (
-            Object.entries(setupSnapshot.baselayer).map(([key, value]) => (
-              <p className="muted" key={key}>
-                {key}: {value || "—"}
-              </p>
-            ))
+          <h3>Base profile</h3>
+          {snapshot.baselayer ? (
+            <div className="stack-sm">
+              {Object.entries(snapshot.baselayer).map(([key, value]) => (
+                <div className="card-flat" key={key}>
+                  <p className="text-sm font-medium" style={{ color: "var(--foreground)", textTransform: "capitalize" }}>{key}</p>
+                  <p className="muted text-sm">{value || "—"}</p>
+                </div>
+              ))}
+            </div>
           ) : (
-            <p className="muted">No baselayer profile captured yet.</p>
+            <p className="muted text-sm">Not configured yet.</p>
           )}
         </article>
 
         <article className="card stack">
           <h3>High-level profile</h3>
-          {setupSnapshot.highLevel ? (
-            Object.entries(setupSnapshot.highLevel).map(([key, value]) => (
-              <p className="muted" key={key}>
-                {key}: {value || "—"}
-              </p>
-            ))
+          {snapshot.highLevel ? (
+            <div className="stack-sm">
+              {Object.entries(snapshot.highLevel).map(([key, value]) => (
+                <div className="card-flat" key={key}>
+                  <p className="text-sm font-medium" style={{ color: "var(--foreground)", textTransform: "capitalize" }}>{key}</p>
+                  <p className="muted text-sm">{value || "—"}</p>
+                </div>
+              ))}
+            </div>
           ) : (
-            <p className="muted">No high-level profile captured yet.</p>
+            <p className="muted text-sm">Not configured yet.</p>
           )}
         </article>
       </section>
+
+      <DeleteAccountSection />
     </main>
   );
 }

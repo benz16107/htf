@@ -30,7 +30,8 @@ export async function POST(req: Request) {
             assumptions: body.assumptions || [],
         };
 
-        const output = await runSignalRiskAgent(session.companyId, agentInput);
+        const createRiskCase = body.createRiskCase !== false;
+        const output = await runSignalRiskAgent(session.companyId, agentInput, { createRiskCase });
 
         return NextResponse.json({ success: true, riskAssessment: output });
     } catch (error: any) {

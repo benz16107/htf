@@ -1,21 +1,21 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import { ClerkProvider } from "@clerk/nextjs";
-import { isClerkEnabled } from "@/lib/auth-config";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-mono",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "HTF Intelligence Dashboard",
+  title: "PENTAGON",
   description:
     "Multi-tenant supply chain risk intelligence with setup, decision traces, and mitigation workflows.",
 };
@@ -27,8 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} app-body`} suppressHydrationWarning>
-        {/* Supabase-only: ClerkProvider removed */}
+      <body className={`${inter.variable} ${jetbrainsMono.variable} app-body`} suppressHydrationWarning>
         {children}
       </body>
     </html>

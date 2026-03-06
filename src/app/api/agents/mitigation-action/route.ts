@@ -24,7 +24,10 @@ export async function POST(req: Request) {
             body.scenarioId
         );
 
-        return NextResponse.json({ success: true, plan: output });
+        const out = output as { plan?: { id: string; actions: unknown; status: string; executionMode: string }; summary?: string };
+        const plan = out.plan ?? null;
+        const payload = plan ? { ...plan, summary: out.summary ?? (plan as any).summary } : out;
+        return NextResponse.json({ success: true, plan: payload });
     } catch (error: any) {
         console.error("Mitigation generation error:", error);
         return NextResponse.json(

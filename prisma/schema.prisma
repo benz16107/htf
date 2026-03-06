@@ -49,6 +49,7 @@ model User {
   id             String            @id @default(cuid())
   externalAuthId String?           @unique
   email          String            @unique
+  passwordHash   String?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   companies      UserCompanyRole[]
@@ -68,8 +69,10 @@ model Company {
   overridePolicies OverridePolicy[]
   memoryThreads    MemoryThread[]
   agentSessions    AgentSession[]
-  riskCases        RiskCase[]
-  playbookEntries  PlaybookEntry[]
+  riskCases              RiskCase[]
+  playbookEntries        PlaybookEntry[]
+  ingestedEvents         IngestedEvent[]
+  savedExternalSignals   SavedExternalSignal[]
 }
 
 model UserCompanyRole {
@@ -195,6 +198,8 @@ model RiskCase {
   probabilityBandLow    Float?
   probabilityBandHigh   Float?
   confidenceLevel       String?
+  /** Key drivers from the risk assessment (e.g. probability.topDrivers) */
+  keyDrivers            Json?
   severity              RiskSeverity?
   serviceImpact         Json?
   financialImpact       Json?
@@ -219,6 +224,8 @@ model Scenario {
   timeToImplementHrs Int?
   confidenceLevel    String?
   assumptions        Json?
+  /** Short list of subjects/tasks this scenario will draft (e.g. ["Notify primary supplier", "Expedite shipping"]) */
+  planOutline        Json?
   createdAt          DateTime                @default(now())
   riskCase           RiskCase                @relation(fields: [riskCaseId], references: [id], onDelete: Cascade)
 
@@ -269,4 +276,30 @@ model PlaybookEntry {
   company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId, incidentClass])
+}
+
+model IngestedEvent {
+  id             String   @id @default(cuid())
+  companyId      String
+  source         String
+  toolName       String
+  rawContent     Json?
+  signalSummary  String?
+  createdAt      DateTime @default(now())
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
+}
+
+model SavedExternalSignal {
+  id        String   @id @default(cuid())
+  companyId String
+  title     String
+  snippet   String
+  url       String?
+  source    String?
+  createdAt DateTime @default(now())
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
 }

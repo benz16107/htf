@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { authCookieNames, getSession } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
+import { getRequestOrigin } from "@/lib/request-origin";
 import { runSetupAgent } from "@/server/agents/setup-agent";
 
 export async function GET(request: Request) {
@@ -24,9 +25,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const session = await getSession();
+  const origin = getRequestOrigin(request);
 
   if (!session) {
-    return NextResponse.redirect(new URL("/sign-in", request.url));
+    return NextResponse.redirect(new URL("/sign-in", origin));
   }
 
   const formData = await request.formData();
@@ -133,7 +135,7 @@ export async function POST(request: Request) {
     });
   }
 
-  const response = NextResponse.redirect(new URL("/setup/integrations", request.url));
-
-  return response;
+  const redirectTo = formData.get("redirectTo")?.toString();
+  const nextUrl = redirectTo === "dashboard" ? "/dashboard" : "/setup/integrations";
+  return NextResponse.redirect(new URL(nextUrl, origin));
 }

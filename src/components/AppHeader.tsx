@@ -1,17 +1,17 @@
-import Link from "next/link";
-
 type AppHeaderProps = {
-  title: string;
+  title: React.ReactNode;
   subtitle?: string;
+  actions?: React.ReactNode;
 };
 
-export function AppHeader({ title, subtitle }: AppHeaderProps) {
+export function AppHeader({ title, subtitle, actions }: AppHeaderProps) {
   return (
-    <header className="top-nav">
-      <div className="stack" style={{ gap: "0.3rem" }}>
+    <header className="page-header">
+      <div className="row" style={{ justifyContent: "space-between" }}>
         <h1>{title}</h1>
-        {subtitle ? <p className="muted">{subtitle}</p> : null}
+        {actions}
       </div>
+      {subtitle && <p className="muted">{subtitle}</p>}
     </header>
   );
 }

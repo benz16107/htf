@@ -3,10 +3,25 @@
 import Script from "next/script";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/**
+ * Zapier MCP embed (custom element from mcp.zapier.com/embed/v1/mcp.js).
+ *
+ * What you can customize:
+ * - Size: width, height (e.g. "100%", "600px")
+ * - Look: className is applied to the iframe (border-radius, box-shadow, etc.)
+ * - Pre-fill: signUpEmail, signUpFirstName, signUpLastName (all three enable quick account creation)
+ * - Zapier dashboard: Company Name and allowed domains at https://mcp.zapier.com/manage/embed/config
+ *
+ * What you cannot change: The UI inside the iframe (content, copy, layout) is controlled by Zapier.
+ */
 type ZapierMcpEmbedProps = {
   embedId: string;
   width?: string;
   height?: string;
+  /** CSS class applied to the embed iframe (e.g. for border-radius, shadow). */
+  className?: string;
+  /** Optional origin for the embed. */
+  origin?: string;
   signUpEmail?: string;
   signUpFirstName?: string;
   signUpLastName?: string;
@@ -19,6 +34,8 @@ export function ZapierMcpEmbed({
   embedId,
   width = "100%",
   height = "500px",
+  className,
+  origin,
   signUpEmail,
   signUpFirstName,
   signUpLastName,
@@ -48,6 +65,10 @@ export function ZapierMcpEmbed({
     el.setAttribute("embed-id", embedId);
     el.setAttribute("width", width);
     el.setAttribute("height", height);
+    if (className) el.setAttribute("class-name", className);
+    if (origin) el.setAttribute("origin", origin);
+    (el as HTMLElement).style.width = width;
+    (el as HTMLElement).style.height = height;
     if (signUpEmail) el.setAttribute("sign-up-email", signUpEmail);
     if (signUpFirstName) el.setAttribute("sign-up-first-name", signUpFirstName);
     if (signUpLastName) el.setAttribute("sign-up-last-name", signUpLastName);
@@ -61,7 +82,7 @@ export function ZapierMcpEmbed({
       el.removeEventListener("close-requested", handleCloseRequested);
       container.removeChild(el);
     };
-  }, [scriptLoaded, embedId, width, height, signUpEmail, signUpFirstName, signUpLastName, handleMcpServerUrl, handleToolsChanged, handleCloseRequested]);
+  }, [scriptLoaded, embedId, width, height, className, origin, signUpEmail, signUpFirstName, signUpLastName, handleMcpServerUrl, handleToolsChanged, handleCloseRequested]);
 
   if (!embedId) return null;
 
@@ -72,7 +93,11 @@ export function ZapierMcpEmbed({
         strategy="afterInteractive"
         onLoad={() => setScriptLoaded(true)}
       />
-      <div ref={containerRef} style={{ width, minHeight: height }} />
+      <div
+        ref={containerRef}
+        className="zapier-mcp-embed-container"
+        style={{ width: "100%", minHeight: height, height }}
+      />
     </>
   );
 }

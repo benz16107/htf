@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getRequestOrigin } from "@/lib/request-origin";
 
 function companyOwnerRole() {
   return "OWNER" as const;
@@ -15,13 +16,14 @@ function toCompanyKey(value: string) {
 
 export async function POST(request: Request) {
   const formData = await request.formData();
+  const origin = getRequestOrigin(request);
 
   const email = (formData.get("email")?.toString() ?? "").trim();
   const companyName = (formData.get("companyName")?.toString() ?? "").trim();
   const redirectTo = (formData.get("redirectTo")?.toString() ?? "").trim();
 
   if (!email || !companyName) {
-    return NextResponse.redirect(new URL("/sign-in?error=missing_fields", request.url));
+    return NextResponse.redirect(new URL("/sign-in?error=missing_fields", origin));
   }
 
   const companyKey = toCompanyKey(companyName);
@@ -43,7 +45,7 @@ export async function POST(request: Request) {
 
     if (linkedAccount && linkedAccount.user.email !== email) {
       return NextResponse.redirect(
-        new URL("/sign-in?error=company_account_exists", request.url),
+        new URL("/sign-in?error=company_account_exists", origin),
       );
     }
   }
@@ -65,7 +67,7 @@ export async function POST(request: Request) {
 
     if (anotherCompanyAccountLink) {
       return NextResponse.redirect(
-        new URL("/sign-in?error=account_has_other_company", request.url),
+        new URL("/sign-in?error=account_has_other_company", origin),
       );
     }
   }
@@ -101,5 +103,5 @@ export async function POST(request: Request) {
     },
   });
 
-  return NextResponse.redirect(new URL(redirectTo || "/setup/baselayer", request.url));
+  return NextResponse.redirect(new URL(redirectTo || "/setup/baselayer", origin));
 }

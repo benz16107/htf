@@ -39,19 +39,19 @@ export function TriggerRiskButton({
                 })
             });
 
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
 
-            if (data.success) {
-                // Redirect to plans page, hard refresh to load new db entries
+            if (res.ok && data.success) {
                 router.push("/dashboard/plans");
                 router.refresh();
             } else {
-                alert(data.error || "Failed to assess risk.");
+                const msg = data.error || (res.status === 401 ? "Please sign in again." : "Failed to assess risk.");
+                alert(msg);
                 setLoading(false);
             }
         } catch (err) {
             console.error(err);
-            alert("Network error.");
+            alert("Network error. Check the console.");
             setLoading(false);
         }
     };

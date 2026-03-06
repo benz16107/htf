@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getRequestOrigin } from "@/lib/request-origin";
+import { clearSession, authCookieNames } from "@/lib/auth";
 
 export async function POST(request: Request) {
-  const supabase = await createServerSupabaseClient();
-  await supabase.auth.signOut();
-  return NextResponse.redirect(new URL("/", request.url), { status: 303 });
+  const origin = getRequestOrigin(request);
+  await clearSession();
+  const res = NextResponse.redirect(new URL("/sign-in", origin));
+  res.cookies.delete(authCookieNames.session);
+  return res;
 }

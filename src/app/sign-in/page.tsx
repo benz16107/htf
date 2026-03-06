@@ -1,114 +1,73 @@
 "use client";
 
-export const dynamic = 'force-dynamic';
 import Link from "next/link";
-import React, { useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
-import { useRouter } from "next/navigation";
-import SetupRedirect from "@/components/SetupRedirect";
+import { useSearchParams } from "next/navigation";
 
 export default function SignInPage() {
-  const router = useRouter();
-  const [redirectTo, setRedirectTo] = useState("/setup/baselayer");
-  React.useEffect(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const r = params.get("redirectTo")?.trim();
-      if (r) setRedirectTo(r);
-    }
-  }, []);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const error = searchParams.get("error");
+  const redirectTo = searchParams.get("redirectTo") ?? "/dashboard";
 
-  // Email/password sign-in
-  async function handleSignIn(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    setMessage(null);
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-    if (signInError) {
-      setError(signInError.message);
-    } else {
-      window.location.href = redirectTo;
-    }
-    setLoading(false);
-  }
-
-  // Social login (Google example)
-  async function handleSocialLogin(provider: "google" | "github") {
-    setLoading(true);
-    setError(null);
-    setMessage(null);
-    const { error: socialError } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo: `${window.location.origin}/api/auth/callback?next=${encodeURIComponent(redirectTo)}`,
-      },
-    });
-    if (socialError) {
-      setError(socialError.message);
-    } else {
-      // For OAuth, Supabase will redirect back to your app, so SetupRedirect or landing page logic will handle it
-    }
-    setLoading(false);
-  }
+  const errorMessage =
+    error === "missing_fields"
+      ? "Please enter your email and password."
+      : error === "invalid_credentials"
+        ? "Invalid email or password."
+        : null;
 
   return (
-    <>
-      <SetupRedirect />
-      <main className="container stack">
-        <section className="card stack">
-          <h1>Welcome Back</h1>
-          <p className="muted">Sign in to your company account.</p>
+    <div className="auth-page">
+      <div className="auth-card auth-card--signin">
+        <header className="auth-card__header">
+          <h1>Sign in</h1>
+          <p className="muted text-sm">Sign in to your account to continue.</p>
+        </header>
 
-          <form className="stack" onSubmit={handleSignIn}>
-            <label className="field">
-              Email
-              <input
-                required
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="your@email.com"
-              />
-            </label>
-            <label className="field">
-              Password
-              <input
-                required
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="Password"
-              />
-            </label>
-            <button className="btn primary" type="submit" disabled={loading}>
-              {loading ? "Signing in..." : "Sign in"}
-            </button>
-          </form>
-
-          <div className="row">
-            <button className="btn" onClick={() => handleSocialLogin("google")} disabled={loading}>
-              Sign in with Google
-            </button>
+        {errorMessage && (
+          <div className="auth-card__error" role="alert">
+            {errorMessage}
           </div>
+        )}
 
-          <p className="muted" style={{ marginTop: "1rem", textAlign: "center" }}>
-            Don't have an account? <Link href="/sign-up" style={{ color: "var(--accent-text)" }}>Sign up</Link>
+        <form action="/api/auth/sign-in" method="post" className="auth-card__form">
+          <input type="hidden" name="redirectTo" value={redirectTo} />
+          <div className="field">
+            <label htmlFor="signin-email">Email</label>
+            <input
+              id="signin-email"
+              type="email"
+              name="email"
+              required
+              autoComplete="email"
+              placeholder="you@example.com"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="signin-password">Password</label>
+            <input
+              id="signin-password"
+              type="password"
+              name="password"
+              required
+              autoComplete="current-password"
+              placeholder="Enter your password"
+            />
+          </div>
+          <button type="submit" className="btn primary auth-card__submit">
+            Sign in
+          </button>
+        </form>
+
+        <footer className="auth-card__footer">
+          <p className="muted text-sm">
+            Don&apos;t have an account?{" "}
+            <Link href="/sign-up" className="link">Sign up</Link>
           </p>
-
-          {error && <p className="muted" style={{ color: "#c44" }}>{error}</p>}
-          {message && <p className="muted" style={{ color: "#4c4" }}>{message}</p>}
-
-          <Link className="btn" href="/">
-            Back to landing
+          <Link href="/" className="btn secondary auth-card__back">
+            Back to home
           </Link>
-        </section>
-      </main>
-    </>
+        </footer>
+      </div>
+    </div>
   );
 }

@@ -6,6 +6,7 @@ import { useState, useEffect } from "react";
 
 export default function BaselayerSetupPage() {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     companyName: "",
     sector: "",
@@ -14,7 +15,6 @@ export default function BaselayerSetupPage() {
     manualInput: "",
   });
 
-  // load existing base profile if available
   useEffect(() => {
     fetch("/api/setup/baselayer")
       .then((r) => r.json())
@@ -29,7 +29,7 @@ export default function BaselayerSetupPage() {
           }));
         }
       })
-      .catch((e) => console.error("failed to fetch existing baselayer", e));
+      .catch(() => {});
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -38,35 +38,25 @@ export default function BaselayerSetupPage() {
 
   const generateWithAIAgent = async () => {
     if (!formData.companyName && !formData.manualInput) {
-      alert("Please provide at least a Company Name or Manual Input to analyze.");
+      alert("Provide at least a Company Name or context for the AI to analyze.");
       return;
     }
-
     setIsGenerating(true);
     try {
-      const response = await fetch("/api/setup/generate", {
+      const res = await fetch("/api/setup/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          companyName: formData.companyName,
-          manualInput: formData.manualInput,
-        }),
+        body: JSON.stringify({ companyName: formData.companyName, manualInput: formData.manualInput }),
       });
-
-      if (!response.ok) {
-        throw new Error("Failed to generate AI analysis");
-      }
-
-      const data = await response.json();
-
+      if (!res.ok) throw new Error("Failed");
+      const data = await res.json();
       setFormData((prev) => ({
         ...prev,
         sector: data.sector || prev.sector,
         companyType: `${data.sizeBand ? data.sizeBand + " " : ""}${data.companyType || ""}`.trim() || prev.companyType,
         supplyChainSummary: data.supplyChainSummary || prev.supplyChainSummary,
       }));
-    } catch (error) {
-      console.error(error);
+    } catch {
       alert("Error generating company profile via AI Setup Agent.");
     } finally {
       setIsGenerating(false);
@@ -74,98 +64,55 @@ export default function BaselayerSetupPage() {
   };
 
   return (
-    <main className="container stack">
-      <AppHeader
-        title="Setup: Baselayer Company Profile"
-        subtitle="Step 1 of 4"
-      />
+    <main className="container stack-xl">
+      <AppHeader title="Base Profile" subtitle="Step 1 of 4 — Define your company and supply chain." />
 
-      <section className="card stack">
-        <p className="muted">
-          Define your base company profile. You can either type a prompt for the AI
-          Setup Agent to analyze, or enter information manually below.
-        </p>
-
-        <div className="stack" style={{ gap: "1rem" }}>
+      <section className="card stack-lg">
+        <div className="stack">
           <label className="field">
             Company legal name
-            <input
-              name="companyName"
-              required
-              placeholder="Acme Logistics"
-              value={formData.companyName}
-              onChange={handleChange}
-            />
+            <input name="companyName" required placeholder="Acme Logistics" value={formData.companyName} onChange={handleChange} />
           </label>
 
           <label className="field">
-            (Optional) Manual Context for AI Setup Agent
-            <textarea
-              name="manualInput"
-              placeholder="Paste any notes about your supply chain, or links/info for the AI"
-              value={formData.manualInput}
-              onChange={handleChange}
-              rows={3}
-            />
+            Context for AI agent (optional)
+            <textarea name="manualInput" placeholder="Paste notes about your supply chain, links, or any info for the AI…" value={formData.manualInput} onChange={handleChange} rows={3} />
           </label>
 
-          <button
-            type="button"
-            className="btn secondary"
-            onClick={generateWithAIAgent}
-            disabled={isGenerating}
-          >
-            {isGenerating ? "AI Agent is Analyzing..." : "Fill with AI Setup Agent"}
+          <button type="button" className="btn secondary" onClick={generateWithAIAgent} disabled={isGenerating}>
+            {isGenerating ? "AI is analyzing…" : "Fill with AI Setup Agent"}
           </button>
         </div>
 
-        <hr style={{ margin: "2rem 0", borderColor: "var(--border)" }} />
+        <hr className="divider" />
 
-        <form className="stack" action="/api/setup/baselayer" method="post">
+        <form className="stack" action="/api/setup/baselayer" method="post" onSubmit={() => setIsSubmitting(true)}>
           <input type="hidden" name="companyName" value={formData.companyName} />
           <input type="hidden" name="manualInput" value={formData.manualInput} />
 
           <label className="field">
             Sector
-            <input
-              name="sector"
-              required
-              placeholder="Retail / Manufacturing"
-              value={formData.sector}
-              onChange={handleChange}
-            />
+            <input name="sector" required placeholder="Retail / Manufacturing" value={formData.sector} onChange={handleChange} />
           </label>
 
           <label className="field">
             Company type and size
-            <input
-              name="companyType"
-              required
-              placeholder="Mid-market distributor"
-              value={formData.companyType}
-              onChange={handleChange}
-            />
+            <input name="companyType" required placeholder="Mid-market distributor" value={formData.companyType} onChange={handleChange} />
           </label>
 
           <label className="field">
             Supply chain summary
-            <textarea
-              name="supplyChainSummary"
-              required
-              placeholder="Describe suppliers, lanes, plants, channels, and stakeholders."
-              value={formData.supplyChainSummary}
-              onChange={handleChange}
-              rows={6}
-            />
+            <textarea name="supplyChainSummary" required placeholder="Describe suppliers, lanes, plants, channels, and stakeholders." value={formData.supplyChainSummary} onChange={handleChange} rows={5} />
           </label>
 
-          <div className="row">
-            <button className="btn primary" type="submit">
-              Confirm Base Profile
+          <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+            <button className="btn primary" type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Setting up…" : "Confirm & next"}
             </button>
-            <Link className="btn" href="/setup/review">
-              Review current setup
-            </Link>
+            <button className="btn secondary" type="submit" name="redirectTo" value="dashboard" disabled={isSubmitting}>
+              {isSubmitting ? "Saving…" : "Save and go to dashboard"}
+            </button>
+            <Link className="btn secondary" href="/setup/review">Review setup</Link>
           </div>
         </form>
       </section>
