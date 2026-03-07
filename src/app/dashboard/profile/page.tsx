@@ -30,8 +30,7 @@ export default async function ProfileDashboardPage() {
   return (
     <div className="stack-xl" style={{ maxWidth: 1100 }}>
       <AppHeader
-        title="Company Profile"
-        subtitle="Your supply chain knowledge graph and operational baseline."
+        title="Company profile"
         actions={<Link href="/setup/review" className="btn secondary btn-sm">Edit setup sections</Link>}
       />
 

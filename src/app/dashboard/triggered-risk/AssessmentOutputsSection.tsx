@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
 import type { AssessmentOutput } from "./types";
 
 function formatAssessedAt(iso: string): string {
@@ -16,6 +17,15 @@ function formatAssessedAt(iso: string): string {
 function toPercent(n: number): number {
   if (n > 1) return Math.min(100, Math.max(0, n));
   return Math.min(100, Math.max(0, n * 100));
+}
+
+/** Severity → left border and severity label color (red / orange / yellow / neutral) */
+function severityColor(severity: string | undefined): { border: string; text: string } {
+  const s = (severity ?? "").toLowerCase();
+  if (s === "critical") return { border: "var(--danger)", text: "var(--danger)" };
+  if (s === "severe") return { border: "var(--warning)", text: "var(--warning)" };
+  if (s === "moderate") return { border: "var(--caution)", text: "var(--caution)" };
+  return { border: "var(--muted)", text: "var(--muted)" };
 }
 
 type Props = {
@@ -36,9 +46,7 @@ export function AssessmentOutputsSection({
   return (
     <section className="card stack">
       <h3>Assessment outputs</h3>
-      <p className="muted text-sm" style={{ margin: 0 }}>
-        Send an assessment to mitigation to create a risk case and view plans, or start another risk assessment.
-      </p>
+      <p className="muted text-sm">Send to mitigation for plans, or run another assessment.</p>
       <div className="stack-sm">
         {outputs.map((out) => {
           const a = out.assessment;
@@ -48,13 +56,14 @@ export function AssessmentOutputsSection({
           const tw = out.timeWindow;
           const isExpanded = expandedId === out.id;
 
+          const sevColor = severityColor(impact?.severity);
           return (
             <div
               key={out.id}
               className="card-flat stack-sm"
-              style={{ padding: "0.75rem 1rem", borderLeftWidth: 3, borderLeftColor: "var(--accent)" }}
+              style={{ padding: "0.75rem 1rem", borderLeftWidth: 3, borderLeftColor: sevColor.border }}
             >
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "0.5rem" }}>
+              <div className="row between start gap-xs">
                 <div className="stack-xs">
                   <span className="font-semibold text-sm">{out.issueTitle ?? out.triggerType}</span>
                   {out.assessedAt && (
@@ -83,11 +92,11 @@ export function AssessmentOutputsSection({
               </div>
 
               {/* Risk & impact metrics (same structure as mitigation plan card) */}
-              <div className="row" style={{ flexWrap: "wrap", gap: "1rem", alignItems: "flex-start", marginTop: "0.5rem" }}>
+              <div className="row start" style={{ gap: "1rem", marginTop: "0.5rem" }}>
                 {impact?.severity && (
                   <div>
                     <p className="text-xs uppercase muted" style={{ margin: 0 }}>Severity</p>
-                    <p className="text-sm font-medium" style={{ margin: "0.2rem 0 0 0", textTransform: "uppercase" }}>{String(impact.severity)}</p>
+                    <p className="text-sm font-medium" style={{ margin: "0.2rem 0 0 0", textTransform: "uppercase", color: sevColor.text }}>{String(impact.severity)}</p>
                   </div>
                 )}
                 {(prob?.pointEstimate != null || prob?.bandLow != null) && (
@@ -130,7 +139,7 @@ export function AssessmentOutputsSection({
                 {impact && (impact.severity || impact.timelineWeeks != null) && (
                   <div>
                     <p className="text-xs uppercase muted" style={{ margin: 0 }}>Impact</p>
-                    <p className="text-sm font-medium" style={{ margin: "0.2rem 0 0 0" }}>
+                    <p className="text-sm font-medium" style={{ margin: "0.2rem 0 0 0", color: impact.severity ? sevColor.text : undefined }}>
                       {impact.severity && String(impact.severity)}
                       {impact.timelineWeeks != null && ` · ${impact.timelineWeeks} wk`}
                     </p>
@@ -140,9 +149,9 @@ export function AssessmentOutputsSection({
 
               {/* Key drivers: visible on the card */}
               {Array.isArray(prob?.topDrivers) && prob.topDrivers.length > 0 && (
-                <div style={{ marginTop: "0.5rem" }}>
+                <div className="mt-xs">
                   <p className="text-xs uppercase muted" style={{ margin: "0 0 0.35rem 0" }}>Key drivers</p>
-                  <ul className="text-sm" style={{ margin: 0, paddingLeft: "1.25rem", listStyle: "disc" }}>
+                  <ul className="text-sm list-disc" style={{ margin: 0 }}>
                     {prob.topDrivers.map((d, i) => (
                       <li key={i} style={{ marginBottom: "0.2rem" }}>{d}</li>
                     ))}
@@ -150,8 +159,32 @@ export function AssessmentOutputsSection({
                 </div>
               )}
 
+              {/* Key stakeholders */}
+              {Array.isArray(a?.keyStakeholders) && a.keyStakeholders.length > 0 && (
+                <div className="mt-xs">
+                  <p className="text-xs uppercase muted" style={{ margin: "0 0 0.35rem 0" }}>Key stakeholders</p>
+                  <ul className="text-sm list-disc" style={{ margin: 0 }}>
+                    {a.keyStakeholders.map((s, i) => (
+                      <li key={i} style={{ marginBottom: "0.2rem" }}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Potential losses */}
+              {Array.isArray(a?.potentialLosses) && a.potentialLosses.length > 0 && (
+                <div className="mt-xs">
+                  <p className="text-xs uppercase muted" style={{ margin: "0 0 0.35rem 0" }}>Potential losses</p>
+                  <ul className="text-sm list-disc" style={{ margin: 0 }}>
+                    {a.potentialLosses.map((l, i) => (
+                      <li key={i} style={{ marginBottom: "0.2rem" }}>{l}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {/* Expandable: how the agent came up with these numbers */}
-              <div style={{ marginTop: "0.75rem" }}>
+              <div className="mt-sm">
                 <button
                   type="button"
                   className="btn secondary btn-sm"
@@ -161,37 +194,43 @@ export function AssessmentOutputsSection({
                   {isExpanded ? "Hide details" : "Show more details"}
                 </button>
                 {isExpanded && (
-                  <div className="card-flat stack-sm" style={{ marginTop: "0.5rem", padding: "0.75rem 1rem", background: "var(--bg-soft)" }}>
+                  <div className="card-flat stack-sm mt-xs pad-sm">
                     {(a as any).reasoning && typeof (a as any).reasoning === "object" && (
-                      <div className="stack-sm" style={{ marginBottom: "0.75rem" }}>
+                      <div className="stack-sm mb-sm">
                         <p className="text-xs font-semibold uppercase muted" style={{ margin: "0 0 0.35rem 0" }}>Exact reasoning (how the agent came up with these numbers)</p>
                         {((a as any).reasoning as { probability?: string; impact?: string; financialImpact?: string }).probability?.trim() && (
                           <div>
                             <p className="text-xs uppercase muted" style={{ margin: "0 0 0.2rem 0" }}>Probability & confidence</p>
-                            <p className="text-sm" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{((a as any).reasoning as { probability?: string }).probability}</p>
+                            <div className="assessment-reasoning text-sm">
+                              <ReactMarkdown>{((a as any).reasoning as { probability?: string }).probability}</ReactMarkdown>
+                            </div>
                           </div>
                         )}
                         {((a as any).reasoning as { impact?: string }).impact?.trim() && (
                           <div>
                             <p className="text-xs uppercase muted" style={{ margin: "0 0 0.2rem 0" }}>Impact & severity</p>
-                            <p className="text-sm" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{((a as any).reasoning as { impact?: string }).impact}</p>
+                            <div className="assessment-reasoning text-sm">
+                              <ReactMarkdown>{((a as any).reasoning as { impact?: string }).impact}</ReactMarkdown>
+                            </div>
                           </div>
                         )}
                         {((a as any).reasoning as { financialImpact?: string }).financialImpact?.trim() && (
                           <div>
                             <p className="text-xs uppercase muted" style={{ margin: "0 0 0.2rem 0" }}>Financial impact</p>
-                            <p className="text-sm" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{((a as any).reasoning as { financialImpact?: string }).financialImpact}</p>
+                            <div className="assessment-reasoning text-sm">
+                              <ReactMarkdown>{((a as any).reasoning as { financialImpact?: string }).financialImpact}</ReactMarkdown>
+                            </div>
                           </div>
                         )}
                       </div>
                     )}
-                    <p className="text-xs muted" style={{ margin: 0 }}>
+                    <p className="text-xs muted">
                       The agent derived these numbers from the selected signals and your company profile. Key drivers are shown on the card above; below are the affected areas it used.
                     </p>
                     {Array.isArray(impact?.affectedAreas) && impact.affectedAreas.length > 0 && (
                       <div>
                         <p className="text-xs uppercase muted" style={{ margin: "0 0 0.35rem 0" }}>Affected areas</p>
-                        <ul className="text-sm" style={{ margin: 0, paddingLeft: "1.25rem", listStyle: "disc" }}>
+                        <ul className="text-sm list-disc" style={{ margin: 0 }}>
                           {impact.affectedAreas.map((area, i) => (
                             <li key={i} style={{ marginBottom: "0.2rem" }}>{area}</li>
                           ))}
@@ -199,17 +238,17 @@ export function AssessmentOutputsSection({
                       </div>
                     )}
                     {prob?.bandLow != null && prob?.bandHigh != null && prob.pointEstimate == null && (
-                      <p className="text-xs muted" style={{ margin: 0 }}>
+                      <p className="text-xs muted">
                         Probability band: {toPercent(prob.bandLow).toFixed(0)}%–{toPercent(prob.bandHigh).toFixed(0)}% (agent did not output a single point estimate).
                       </p>
                     )}
                     {fin?.hardCostIncreaseUsd != null && fin.hardCostIncreaseUsd > 0 && (
-                      <p className="text-xs muted" style={{ margin: 0 }}>
+                      <p className="text-xs muted">
                         Hard cost increase (agent estimate): ${Number(fin.hardCostIncreaseUsd).toLocaleString()}.
                       </p>
                     )}
                     {(!prob?.topDrivers?.length && !impact?.affectedAreas?.length && (prob?.bandLow == null || prob?.bandHigh == null) && (fin?.hardCostIncreaseUsd == null || fin.hardCostIncreaseUsd === 0)) && (
-                      <p className="text-xs muted" style={{ margin: 0 }}>No additional driver or area detail was returned for this assessment.</p>
+                      <p className="text-xs muted">No additional driver or area detail was returned for this assessment.</p>
                     )}
                   </div>
                 )}

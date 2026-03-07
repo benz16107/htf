@@ -73,6 +73,9 @@ model Company {
   playbookEntries        PlaybookEntry[]
   ingestedEvents         IngestedEvent[]
   savedExternalSignals   SavedExternalSignal[]
+  autonomousAgentConfig AutonomousAgentConfig?
+  autonomousAgentLogs    AutonomousAgentLog[]
+  assessmentArchives    AssessmentArchive[]
 }
 
 model UserCompanyRole {
@@ -185,10 +188,11 @@ model ReasoningTrace {
 }
 
 model RiskCase {
-  id                    String        @id @default(cuid())
-  companyId             String
-  sessionId             String
-  triggerType           String
+  id                       String        @id @default(cuid())
+  companyId                String
+  sessionId                String
+  triggerType              String
+  createdByAutonomousAgent Boolean       @default(false)
   entityMap             Json
   timeWindow            Json
   evidencePack          Json
@@ -233,19 +237,37 @@ model Scenario {
 }
 
 model MitigationPlan {
-  id              String   @id @default(cuid())
-  companyId       String
-  riskCaseId      String
-  scenarioId      String?
-  owner           String?
-  status          String
-  actions         Json
-  executionMode   String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  riskCase        RiskCase @relation(fields: [riskCaseId], references: [id], onDelete: Cascade)
+  id                       String   @id @default(cuid())
+  companyId                String
+  riskCaseId               String
+  scenarioId               String?
+  owner                    String?
+  status                   String
+  actions                  Json
+  executionMode            String
+  createdByAutonomousAgent Boolean  @default(false)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  riskCase                 RiskCase @relation(fields: [riskCaseId], references: [id], onDelete: Cascade)
 
   @@index([companyId, status])
+}
+
+/// Archived risk assessments (sent to mitigation) from manual flow or autonomous agent. Shown on Signals page.
+model AssessmentArchive {
+  id           String   @id @default(cuid())
+  companyId    String
+  triggerType  String
+  issueTitle   String?
+  entityMap    Json
+  timeWindow   Json
+  assumptions  Json
+  assessment   Json
+  sentAt       DateTime @default(now())
+  source       String   @default("manual") // "manual" | "autonomous"
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
 }
 
 model OverridePolicy {
@@ -279,27 +301,100 @@ model PlaybookEntry {
 }
 
 model IngestedEvent {
-  id             String   @id @default(cuid())
-  companyId      String
-  source         String
-  toolName       String
-  rawContent     Json?
-  signalSummary  String?
-  createdAt      DateTime @default(now())
-  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  id                     String    @id @default(cuid())
+  companyId              String
+  source                 String
+  toolName               String
+  externalId             String?   // e.g. Gmail message_id — used to avoid duplicates when scanning again
+  rawContent             Json?
+  signalSummary          String?
+  createdAt              DateTime  @default(now())
+  /** Set when the autonomous agent has processed this event (assess + optional draft/execute). */
+  autonomousProcessedAt  DateTime?
+  company                Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
+  @@index([companyId, toolName, externalId])
+  @@index([companyId, autonomousProcessedAt])
+}
+
+model SavedExternalSignal {
+  id                     String    @id @default(cuid())
+  companyId              String
+  title                  String
+  snippet                String
+  url                    String?
+  source                 String?
+  articlePublishedAt     DateTime?
+  createdAt              DateTime  @default(now())
+  /** Set when the autonomous agent has processed this signal. */
+  autonomousProcessedAt  DateTime?
+  company                Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId, createdAt])
 }
 
-model SavedExternalSignal {
-  id        String   @id @default(cuid())
-  companyId String
-  title     String
-  snippet   String
-  url       String?
-  source    String?
-  createdAt DateTime @default(now())
-  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+/// One per company. Controls how the autonomous agent reacts to signals (assess, draft, execute).
+model AutonomousAgentConfig {
+  id                          String   @id @default(cuid())
+  companyId                   String   @unique
+  /** When true, the agent runs continuously until toggled off. */
+  agentRunning                Boolean  @default(false)
+  /** Off | assess only | draft only (no auto-execute) | full auto (draft + execute when allowed). */
+  automationLevel             String   @default("off")
+  /** Which signals to process: internal_only | external_only | both. */
+  signalSources               String   @default("both")
+  /** When to pick up internal signals: lookback (poll within window) | live (trigger as soon as received). */
+  internalSignalMode          String   @default("lookback")
+  /** How far back (minutes) to look for unprocessed internal signals (used when internalSignalMode is lookback). */
+  internalSignalLookbackMinutes Int     @default(10)
+  /** How far back (minutes) to look for unprocessed external signals. */
+  externalSignalLookbackMinutes Int     @default(10)
+  /** Minimum severity to act on: MINOR, MODERATE, SEVERE, CRITICAL. */
+  minSeverityToAct            String   @default("MODERATE")
+  /** Min probability (0–100) to create case and draft. */
+  minProbabilityToAct         Float    @default(0)
+  /** Min revenue at risk (USD) to act; null = no floor. */
+  minRevenueAtRiskToAct       Float?
+  /** Require human approval when severity is at or above this (e.g. CRITICAL). */
+  requireApprovalForSeverity  String?
+  /** Require human approval when revenue at risk (USD) is above this; null = no cap. */
+  requireApprovalForRevenueAbove  Float?
+  /** Require human approval when probability is above this (0–100); null = no cap. */
+  requireApprovalForProbabilityAbove Float?
+  /** Max number of plans to auto-execute per day (0 = no auto-execute). */
+  maxAutoExecutionsPerDay     Int      @default(5)
+  /** Action types allowed for auto-execute (e.g. ["zapier_mcp","email"]); empty = none. */
+  allowedActionTypesToAutoExecute Json?
+  /** Require approval for first N incidents per day (e.g. first 1 always needs approval). */
+  requireApprovalForFirstNPerDay   Int      @default(0)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+  company                    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+/// One row per action taken by the autonomous agent (assess, create case, draft plan, execute).
+model AutonomousAgentLog {
+  id          String   @id @default(cuid())
+  companyId   String
+  /** Groups all entries from a single "Run now" / cron invocation. */
+  runId       String
+  /** run_started | signal_assessed | signal_skipped | risk_case_created | plan_drafted | plan_executed | run_completed */
+  actionType  String
+  /** internal | external (for signal-related actions). */
+  signalType  String?
+  signalId    String?
+  riskCaseId  String?
+  planId      String?
+  /** Short human-readable summary (e.g. trigger title, reason skipped). */
+  summary     String?
+  /** Extra context: severity, probability, revenue at risk, etc. */
+  details     Json?
+  createdAt   DateTime @default(now())
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId, createdAt])
+  @@index([companyId, runId])
 }

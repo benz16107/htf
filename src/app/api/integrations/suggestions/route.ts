@@ -83,7 +83,7 @@ Return JSON in this exact shape:
       });
     }
 
-    const parsed = text.startsWith("{") ? JSON.parse(text) : JSON.parse(text.replace(/^.*?(\{[\s\S]*\}).*$/s, "$1"));
+    const parsed = text.startsWith("{") ? JSON.parse(text) : JSON.parse(text.replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/, "$1"));
     const inputContextSuggestions = (parsed.inputContextSuggestions ?? [])
       .filter((name: unknown) => typeof name === "string" && name.trim().length > 0)
       .map((name: string) => name.trim());

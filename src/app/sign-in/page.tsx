@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 
-export default function SignInPage() {
+function SignInForm() {
   const searchParams = useSearchParams();
   const error = searchParams.get("error");
   const redirectTo = searchParams.get("redirectTo") ?? "/dashboard";
@@ -17,10 +18,15 @@ export default function SignInPage() {
 
   return (
     <div className="auth-page">
-      <div className="auth-card auth-card--signin">
+      <div className="auth-card auth-card--signin animate-scale">
+        <Link href="/" className="row gap-2xs" style={{ marginBottom: "1.5rem", textDecoration: "none", color: "inherit" }}>
+          <div className="sidebar-logo-mark" />
+          <span style={{ fontWeight: 700, fontSize: "1.125rem", letterSpacing: "-0.03em" }}>PENTAGON</span>
+        </Link>
+
         <header className="auth-card__header">
           <h1>Sign in</h1>
-          <p className="muted text-sm">Sign in to your account to continue.</p>
+          <p className="muted text-sm">Sign in to continue.</p>
         </header>
 
         {errorMessage && (
@@ -39,7 +45,7 @@ export default function SignInPage() {
               name="email"
               required
               autoComplete="email"
-              placeholder="you@example.com"
+              placeholder="you@company.com"
             />
           </div>
           <div className="field">
@@ -60,8 +66,8 @@ export default function SignInPage() {
 
         <footer className="auth-card__footer">
           <p className="muted text-sm">
-            Don&apos;t have an account?{" "}
-            <Link href="/sign-up" className="link">Sign up</Link>
+            No account yet?{" "}
+            <Link href="/sign-up" className="link" style={{ color: "var(--accent-text)", fontWeight: 600 }}>Create one</Link>
           </p>
           <Link href="/" className="btn secondary auth-card__back">
             Back to home
@@ -69,5 +75,13 @@ export default function SignInPage() {
         </footer>
       </div>
     </div>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={<div className="auth-page"><div className="auth-card auth-card--signin"><p className="muted">Loading…</p></div></div>}>
+      <SignInForm />
+    </Suspense>
   );
 }

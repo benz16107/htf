@@ -6,8 +6,8 @@ type AppHeaderProps = {
 
 export function AppHeader({ title, subtitle, actions }: AppHeaderProps) {
   return (
-    <header className="page-header">
-      <div className="row" style={{ justifyContent: "space-between" }}>
+    <header className="page-header animate-in">
+      <div className="page-header__top">
         <h1>{title}</h1>
         {actions}
       </div>

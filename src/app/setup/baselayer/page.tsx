@@ -65,7 +65,7 @@ export default function BaselayerSetupPage() {
 
   return (
     <main className="container stack-xl">
-      <AppHeader title="Base Profile" subtitle="Step 1 of 4 — Define your company and supply chain." />
+      <AppHeader title="Base profile" subtitle="Step 1 of 4" />
 
       <section className="card stack-lg">
         <div className="stack">
@@ -75,8 +75,8 @@ export default function BaselayerSetupPage() {
           </label>
 
           <label className="field">
-            Context for AI agent (optional)
-            <textarea name="manualInput" placeholder="Paste notes about your supply chain, links, or any info for the AI…" value={formData.manualInput} onChange={handleChange} rows={3} />
+            Context for AI (optional)
+            <textarea name="manualInput" placeholder="Optional context for the AI" value={formData.manualInput} onChange={handleChange} rows={3} />
           </label>
 
           <button type="button" className="btn secondary" onClick={generateWithAIAgent} disabled={isGenerating}>
@@ -89,6 +89,7 @@ export default function BaselayerSetupPage() {
         <form className="stack" action="/api/setup/baselayer" method="post" onSubmit={() => setIsSubmitting(true)}>
           <input type="hidden" name="companyName" value={formData.companyName} />
           <input type="hidden" name="manualInput" value={formData.manualInput} />
+          <input type="hidden" name="redirectTo" defaultValue="" />
 
           <label className="field">
             Sector
@@ -102,14 +103,24 @@ export default function BaselayerSetupPage() {
 
           <label className="field">
             Supply chain summary
-            <textarea name="supplyChainSummary" required placeholder="Describe suppliers, lanes, plants, channels, and stakeholders." value={formData.supplyChainSummary} onChange={handleChange} rows={5} />
+            <textarea name="supplyChainSummary" required placeholder="Brief supply chain summary" value={formData.supplyChainSummary} onChange={handleChange} rows={5} />
           </label>
 
-          <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+          <div className="row gap-xs">
             <button className="btn primary" type="submit" disabled={isSubmitting}>
               {isSubmitting ? "Setting up…" : "Confirm & next"}
             </button>
-            <button className="btn secondary" type="submit" name="redirectTo" value="dashboard" disabled={isSubmitting}>
+            <button
+              className="btn secondary"
+              type="button"
+              disabled={isSubmitting}
+              onClick={(e) => {
+                const form = (e.target as HTMLButtonElement).form;
+                const redirectInput = form?.querySelector<HTMLInputElement>('input[name="redirectTo"]');
+                if (redirectInput) redirectInput.value = "dashboard";
+                form?.requestSubmit();
+              }}
+            >
               {isSubmitting ? "Saving…" : "Save and go to dashboard"}
             </button>
             <Link className="btn secondary" href="/setup/review">Review setup</Link>

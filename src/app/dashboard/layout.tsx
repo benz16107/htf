@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSession, hasCompletedSetup } from "@/lib/auth";
+import { db } from "@/lib/db";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -7,13 +8,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!session) redirect("/sign-in");
   if (!(await hasCompletedSetup())) redirect("/setup/baselayer");
 
-  return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
-      <aside className="sidebar">
-        <DashboardSidebar email={session.email} />
-      </aside>
+  const company = session.companyId
+    ? await db.company.findUnique({ where: { id: session.companyId }, select: { name: true } })
+    : null;
+  const companyName = company?.name ?? null;
 
-      <main style={{ flex: 1, marginLeft: 240, padding: "2rem", overflowY: "auto", minHeight: "100vh" }}>{children}</main>
+  return (
+    <div className="dashboard-shell">
+      <aside className="sidebar">
+        <DashboardSidebar email={session.email} companyName={companyName} />
+      </aside>
+      <main className="dashboard-main">
+        {children}
+      </main>
     </div>
   );
 }

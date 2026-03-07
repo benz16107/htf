@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ConfirmModal } from "@/components/ConfirmModal";
+import { groupToolsByApp } from "@/lib/integration-tool-hint";
 import type { SelectedSignal } from "./types";
 
 const EXTERNAL_AUTO_SCAN_STORAGE_KEY = "risk-external-auto-scan";
@@ -74,48 +76,34 @@ function ExternalSignalRow({
   signal: s,
   index: i,
   onAddToAssessment,
-  onDelete,
+  onRequestDelete,
 }: {
   signal: ExternalSignalItem;
   index: number;
   onAddToAssessment?: (item: SelectedSignal) => void;
-  onDelete: () => void;
+  onRequestDelete?: (id: string) => void;
 }) {
-  const [deleting, setDeleting] = useState(false);
-
-  const handleDelete = async () => {
-    if (!s.id || deleting) return;
-    setDeleting(true);
-    try {
-      const res = await fetch(`/api/risk/external-signals/${s.id}`, { method: "DELETE" });
-      if (res.ok) onDelete();
-    } finally {
-      setDeleting(false);
-    }
-  };
-
   const id = s.id ?? `ext-${i}-${(s.title || "").slice(0, 40).replace(/\s+/g, "-")}`;
 
   return (
     <li className="trace-row">
       <div className="trace-meta">
-        <span className="font-semibold text-sm" style={{ color: "var(--accent-text)" }}>{s.title}</span>
+        <span className="trace-title text-sm">{s.title}</span>
         {s.source && <span className="badge">{s.source}</span>}
       </div>
-      <p className="text-sm muted" style={{ lineHeight: 1.5, margin: 0 }}>{s.snippet}</p>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+      <p className="text-sm muted">{s.snippet}</p>
+      <div className="trace-actions">
         <span>
           <a
             href={s.url || `https://www.google.com/search?q=${encodeURIComponent(s.title || "")}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs"
-            style={{ color: "var(--accent-text)" }}
+            className="text-xs link-accent"
           >
             Read more
           </a>
         </span>
-        <div className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+        <div className="row gap-xs">
           {onAddToAssessment && (
             <button
               type="button"
@@ -132,16 +120,15 @@ function ExternalSignalRow({
               Add to risk assessment
             </button>
           )}
-          {s.id && (
+          {s.id && onRequestDelete && (
             <button
               type="button"
               className="btn secondary btn-sm"
-              onClick={handleDelete}
-              disabled={deleting}
+              onClick={() => onRequestDelete(s.id!)}
               title="Remove this signal"
               aria-label="Remove signal"
             >
-              {deleting ? "…" : "Remove"}
+              Remove
             </button>
           )}
         </div>
@@ -161,7 +148,21 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
   const [configOpen, setConfigOpen] = useState(false);
   const [intervalMinutes, setIntervalMinutes] = useState(5);
   const [clearingAll, setClearingAll] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<null | { type: "one"; id: string } | { type: "all" }>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [configuredTools, setConfiguredTools] = useState<string[]>([]);
   const mounted = useRef(true);
+
+  const fetchToolSelections = useCallback(async () => {
+    try {
+      const res = await fetch("/api/zapier/tool-selections");
+      const data = await res.json().catch(() => ({}));
+      if (!mounted.current) return;
+      if (res.ok && Array.isArray(data.inputContextTools)) {
+        setConfiguredTools(data.inputContextTools);
+      }
+    } catch { /* ignore */ }
+  }, []);
 
   const loadSaved = useCallback(async () => {
     setLoading(true);
@@ -187,6 +188,29 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
     }
   }, []);
 
+  const onConfirmDeleteConfirm = useCallback(async () => {
+    if (!confirmDelete) return;
+    if (confirmDelete.type === "one") {
+      setDeletingId(confirmDelete.id);
+      try {
+        const res = await fetch(`/api/risk/external-signals/${confirmDelete.id}`, { method: "DELETE" });
+        if (res.ok) await loadSaved();
+      } finally {
+        if (mounted.current) setDeletingId(null);
+        setConfirmDelete(null);
+      }
+    } else {
+      setClearingAll(true);
+      try {
+        const res = await fetch("/api/risk/external-signals", { method: "DELETE" });
+        if (res.ok) await loadSaved();
+      } finally {
+        if (mounted.current) setClearingAll(false);
+        setConfirmDelete(null);
+      }
+    }
+  }, [confirmDelete, loadSaved]);
+
   const pullFromWeb = useCallback(async () => {
     setRefreshing(true);
     setError(null);
@@ -206,6 +230,10 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
       if (mounted.current) setRefreshing(false);
     }
   }, []);
+
+  useEffect(() => {
+    fetchToolSelections();
+  }, [fetchToolSelections]);
 
   useEffect(() => {
     mounted.current = true;
@@ -240,28 +268,41 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
     pullFromWeb();
   };
 
+  const confirmDeleteOpen = confirmDelete !== null;
+  const confirmDeleteTitle = confirmDelete?.type === "one" ? "Remove signal" : confirmDelete?.type === "all" ? "Remove all signals" : "";
+  const confirmDeleteMessage =
+    confirmDelete?.type === "one"
+      ? "Remove this external signal from the list?"
+      : confirmDelete?.type === "all"
+        ? "Clear all saved external signals for this company? This cannot be undone."
+        : "";
+  const confirmDeleteLoading = (confirmDelete?.type === "one" && deletingId === confirmDelete.id) || (confirmDelete?.type === "all" && clearingAll);
+
   return (
-    <section className="card stack" style={{ padding: 0 }}>
+    <section className="card stack collapsible-card">
+      <ConfirmModal
+        open={confirmDeleteOpen}
+        title={confirmDeleteTitle}
+        message={confirmDeleteMessage}
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        variant="danger"
+        loading={confirmDeleteLoading}
+        onConfirm={onConfirmDeleteConfirm}
+        onCancel={() => setConfirmDelete(null)}
+      />
       <div
-        className="row"
-        style={{
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "1.25rem 1.25rem 0.75rem",
-          borderBottom: "1px solid var(--border)",
-          cursor: "pointer",
-          gap: "0.5rem",
-        }}
+        className="collapsible-card__header"
         onClick={() => setExpanded((e) => !e)}
         role="button"
         tabIndex={0}
         onKeyDown={(ev) => ev.key === "Enter" && setExpanded((e) => !e)}
         aria-expanded={expanded}
       >
-        <div className="row" style={{ alignItems: "center", gap: "0.5rem", minWidth: 0 }}>
+        <div className="collapsible-card__title">
           <span
-            className="muted"
-            style={{ fontSize: "0.875rem", transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}
+            className="collapsible-card__chevron"
+            aria-expanded={expanded}
             aria-hidden
           >
             &gt;
@@ -276,14 +317,14 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
             </span>
           )}
         </div>
-        <div className="row" style={{ gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }} onClick={(ev) => ev.stopPropagation()}>
+        <div className="collapsible-card__header-actions" onClick={(ev) => ev.stopPropagation()}>
           <button
             type="button"
             className="btn secondary btn-sm"
             onClick={() => { setConfigOpen((o) => !o); setExpanded(true); }}
             aria-expanded={configOpen}
           >
-            Configure external signal
+            Configure
           </button>
           <label className="row" style={{ alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.875rem" }}>
             <input
@@ -299,7 +340,7 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
           ) : (
             <button
               type="button"
-              className="btn secondary btn-sm"
+              className="btn primary btn-sm"
               onClick={handlePullManual}
               disabled={refreshing}
             >
@@ -310,13 +351,10 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
       </div>
       {expanded && (
         <>
-          <p className="muted text-sm" style={{ margin: 0, padding: "0.5rem 1.25rem 0", borderBottom: "1px solid var(--border)" }}>
-            News and web articles (supply chain disruptions, disasters, geopolitics, labor, cyber). Each pull adds new signals; previous ones are kept.
-          </p>
           {configOpen && (
-            <div className="card-flat stack-sm" style={{ margin: "0 1.25rem 0.75rem", padding: "0.75rem", borderBottom: "1px solid var(--border)" }}>
-              <p className="text-sm muted" style={{ margin: 0 }}>Auto pull interval: how often to fetch new external signals when Auto scan is on.</p>
-              <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+            <div className="card-flat stack-sm" style={{ margin: "0 1.25rem 0.5rem", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--border)" }}>
+              <p className="text-sm font-medium" style={{ margin: 0 }}>Auto scan interval</p>
+              <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.35rem" }}>
                 {INTERVAL_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
@@ -331,23 +369,34 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
                   </button>
                 ))}
               </div>
+              <p className="text-sm font-medium" style={{ margin: "0.75rem 0 0 0" }}>Input context tools</p>
+              <p className="text-xs muted" style={{ margin: "0.25rem 0 0 0" }}>Tools used for external signal context. Manage in Dashboard → Integrations.</p>
+              {configuredTools.length === 0 ? (
+                <p className="muted text-xs" style={{ margin: "0.35rem 0 0 0" }}>None configured.</p>
+              ) : (
+                <div className="integrations-zone__list" style={{ marginTop: "0.35rem", maxHeight: 220 }}>
+                  {groupToolsByApp(configuredTools.map((name) => ({ name }))).map(({ appKey, appLabel, tools: appTools }) => (
+                    <details key={appKey} className="integrations-zone__group">
+                      <summary className="integrations-zone__group-summary" onClick={(e) => e.stopPropagation()}>
+                        <span className="integrations-zone__group-title">{appLabel}</span>
+                        <span className="integrations-zone__group-meta">{appTools.length}</span>
+                      </summary>
+                      {appTools.map((tool) => (
+                        <div key={tool.name} className="integrations-zone__item" style={{ cursor: "default" }}>
+                          <span className="integrations-zone__item-text">{tool.name}</span>
+                        </div>
+                      ))}
+                    </details>
+                  ))}
+                </div>
+              )}
               <p className="text-sm font-medium" style={{ margin: "0.75rem 0 0 0" }}>Remove all</p>
-              <p className="text-sm muted" style={{ margin: "0.25rem 0 0 0" }}>Clear all saved external signals for this company.</p>
               <button
                 type="button"
                 className="btn secondary btn-sm"
                 style={{ marginTop: "0.35rem" }}
                 disabled={clearingAll || signals.length === 0}
-                onClick={async () => {
-                  if (clearingAll || signals.length === 0) return;
-                  setClearingAll(true);
-                  try {
-                    const res = await fetch("/api/risk/external-signals", { method: "DELETE" });
-                    if (res.ok) await loadSaved();
-                  } finally {
-                    if (mounted.current) setClearingAll(false);
-                  }
-                }}
+                onClick={() => signals.length > 0 && setConfirmDelete({ type: "all" })}
               >
                 {clearingAll ? "Removing…" : "Remove all signals"}
               </button>
@@ -358,12 +407,12 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
               <p className="text-sm" style={{ color: "var(--danger)", margin: 0 }}>{error}</p>
             </div>
           )}
-          <div className="stack-sm" style={{ padding: "0.75rem 1.25rem 1.25rem", maxHeight: "40vh", overflowY: "auto" }}>
+          <div className="stack-sm collapsible-card__body scroll-40vh">
             {loading ? (
               <p className="muted text-sm">Loading…</p>
             ) : signals.length === 0 ? (
               <p className="muted text-sm">
-                {autoScan ? "No external signals yet. Auto scan will keep pulling from the web." : "No external signals. Turn on Auto scan or click &ldquo;Pull from web&rdquo; to fetch news."}
+                {autoScan ? "No signals yet. Auto scan is on." : "No signals. Turn on Auto scan or Pull from web."}
               </p>
             ) : (
               <>
@@ -394,7 +443,7 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
                     signal={s}
                     index={i}
                     onAddToAssessment={onAddToAssessment}
-                    onDelete={loadSaved}
+                    onRequestDelete={(id) => setConfirmDelete({ type: "one", id })}
                   />
                 ))}
               </ul>

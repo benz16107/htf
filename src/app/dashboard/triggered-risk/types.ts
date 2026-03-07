@@ -23,9 +23,15 @@ export type AssessmentOutput = {
     probability?: { pointEstimate?: number; bandLow?: number; bandHigh?: number; confidence?: string; topDrivers?: string[] };
     impact?: { severity?: string; timelineWeeks?: number; affectedAreas?: string[] };
     financialImpact?: { revenueAtRiskUsd?: number; hardCostIncreaseUsd?: number; marginErosionPercent?: number };
+    keyStakeholders?: string[];
+    potentialLosses?: string[];
     scenarios?: Array<{ name: string; recommendation: string }>;
   };
 };
 
-/** Assessment output that was sent to mitigation; includes when it was sent */
-export type ArchivedOutput = AssessmentOutput & { sentAt: string };
+/** Assessment output that was sent to mitigation; includes when it was sent and optional source */
+export type ArchivedOutput = AssessmentOutput & {
+  sentAt: string;
+  /** "autonomous" when created by the autonomous agent; "manual" or omitted when sent by user */
+  source?: "manual" | "autonomous";
+};

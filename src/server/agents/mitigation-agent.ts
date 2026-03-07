@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import type { MitigationPlan } from "@prisma/client";
 import { db } from "@/lib/db";
 import { BackboardClient } from "../memory/backboard-client";
 import { listZapierMCPTools } from "../zapier/mcp-client";
@@ -23,11 +24,16 @@ export type MitigationPlanOutput = {
     summary: string;
 };
 
+export type GenerateMitigationPlanOptions = {
+  createdByAutonomousAgent?: boolean;
+};
+
 export async function generateMitigationPlan(
     companyId: string,
     riskCaseId: string,
     scenarioId: string,
-): Promise<MitigationPlanOutput> {
+    options?: GenerateMitigationPlanOptions,
+): Promise<MitigationPlanOutput & { planId: string; plan: MitigationPlan }> {
     const company = await db.company.findUnique({
         where: { id: companyId },
         include: {
@@ -160,6 +166,7 @@ export async function generateMitigationPlan(
             status: "DRAFTED",
             actions: output.actions as any,
             executionMode: output.executionMode,
+            createdByAutonomousAgent: options?.createdByAutonomousAgent ?? false,
         }
     });
 

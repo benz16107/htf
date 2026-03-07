@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
+import { GoogleGenAI } from "@google/genai";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { isNonRiskNotification } from "@/lib/signal-filters";
 import { callZapierMCPTool } from "@/server/zapier/mcp-client";
 import { getZapierMCPConfigForCompany, getZapierMCPToolSelections } from "@/server/zapier/mcp-config";
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 function isFollowUpOrError(text: string): boolean {
   const t = text.trim();
@@ -11,6 +15,65 @@ function isFollowUpOrError(text: string): boolean {
   if (/Could you (provide|specify|clarify)/i.test(t) && t.length < 400) return true;
   if (/I'm specialized in the/i.test(t) && /don't currently have available/i.test(t)) return true;
   return false;
+}
+
+function textFromRawItem(raw: unknown): string[] {
+  const out: string[] = [];
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    for (const k of ["subject", "snippet", "body", "title", "content", "message"]) {
+      const v = o[k];
+      if (typeof v === "string") out.push(v);
+    }
+    const from = o.from ?? o.sender;
+    if (from && typeof from === "object") {
+      const name = (from as { name?: string }).name;
+      const email = (from as { email?: string }).email;
+      if (typeof name === "string") out.push(name);
+      if (typeof email === "string") out.push(email);
+    }
+  }
+  return out;
+}
+
+/** Build a single text blob for one candidate (summary + subject/snippet/body) for the AI to judge. */
+function contentForRiskCheck(summary: string, raw?: unknown): string {
+  const parts = [summary].concat(textFromRawItem(raw));
+  return parts.join(" ").trim().slice(0, 1200);
+}
+
+/**
+ * Use AI to classify which items are risk-relevant (operational, compliance, or security risk).
+ * Returns one boolean per item. If API key missing or request fails, returns all false (don't ingest unclassified).
+ */
+async function classifyRiskRelevance(
+  items: { summary: string; raw?: unknown }[]
+): Promise<boolean[]> {
+  if (items.length === 0) return [];
+  if (!process.env.GEMINI_API_KEY) return items.map(() => false);
+
+  const blocks = items.map((item, i) => {
+    const text = contentForRiskCheck(item.summary, item.raw);
+    return `[Item ${i + 1}]\n${text || "(no content)"}`;
+  });
+
+  const prompt = `You are a risk analyst. For each item below (email or message summary and content), decide if it indicates OPERATIONAL, COMPLIANCE, or SECURITY risk that a company would want to track. Examples of risk-relevant: incidents, breaches, complaints, legal/regulatory issues, outages, fraud, audits, recalls, security alerts, disputes, claims, failures, escalations. Exclude: routine marketing, shipping notifications, welcome emails, general newsletters, obvious spam. Return ONLY valid JSON, no markdown, in this exact shape: {"results":[{"risk_relevant":true},{"risk_relevant":false},...]} with one object per item in the same order.\n\n${blocks.join("\n\n")}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: { responseMimeType: "application/json" },
+    });
+    const text = response.text?.trim();
+    if (!text) return items.map(() => false);
+    const parsed = JSON.parse(text) as { results?: Array<{ risk_relevant?: boolean }> };
+    const results = Array.isArray(parsed.results) ? parsed.results : [];
+    return items.map((_, i) => Boolean(results[i]?.risk_relevant));
+  } catch (err) {
+    console.error("Ingest risk classification error:", err);
+    return items.map(() => false);
+  }
 }
 
 /** Extract only the exact information retrieved (no full agent/JSON response). */
@@ -88,7 +151,15 @@ function itemToSummary(item: unknown): string | null {
 
 /** Get array of email-like items from parsed Zapier response (various key names). */
 function getEmailLikeArray(parsed: Record<string, unknown>): Array<Record<string, unknown>> {
-  const arr = (parsed.results ?? parsed.data ?? parsed.items ?? parsed.emails ?? parsed.messages ?? parsed.output) as unknown[] | undefined;
+  const keys = ["results", "data", "items", "emails", "messages", "output", "Results", "Data", "Items"];
+  let arr: unknown[] | undefined;
+  for (const k of keys) {
+    const v = (parsed as Record<string, unknown>)[k];
+    if (Array.isArray(v) && v.length > 0) {
+      arr = v;
+      break;
+    }
+  }
   if (!Array.isArray(arr) || arr.length === 0) return [];
   return arr.filter((it): it is Record<string, unknown> => it != null && typeof it === "object");
 }
@@ -108,6 +179,8 @@ function parseAsArray(raw: string): Array<Record<string, unknown>> | null {
 function* gmailResultsToSummaries(content: unknown[]): Generator<{ summary: string; raw: unknown }> {
   for (const item of content) {
     let raw: string | null = null;
+    let parsed: Record<string, unknown> | null = null;
+
     if (item && typeof item === "object") {
       if ("text" in item && typeof (item as { text: unknown }).text === "string") {
         raw = (item as { text: string }).text.trim();
@@ -117,38 +190,51 @@ function* gmailResultsToSummaries(content: unknown[]): Generator<{ summary: stri
           raw = (first as { text: string }).text.trim();
         }
       }
+      if (!raw && typeof (item as { results?: unknown }).results !== "undefined") {
+        const asRecord = item as Record<string, unknown>;
+        const results = asRecord.results ?? asRecord.data ?? asRecord.items ?? asRecord.emails ?? asRecord.messages;
+        if (Array.isArray(results) && results.length > 0) {
+          parsed = asRecord;
+        }
+      }
     } else if (typeof item === "string") {
       raw = item.trim();
     }
-    if (!raw || raw.length < 2) continue;
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      const exact = extractExactInformationSummary(raw);
-      if (exact) yield { summary: exact, raw: item };
-      continue;
-    }
-    if (isFollowUpOrError(raw)) continue;
 
-    let arr = getEmailLikeArray(parsed);
-    if (arr.length === 0) {
-      const topLevelArray = parseAsArray(raw);
-      if (topLevelArray) arr = topLevelArray;
+    if (!parsed && raw && raw.length >= 2) {
+      try {
+        const p = JSON.parse(raw);
+        if (p && typeof p === "object" && !Array.isArray(p)) parsed = p as Record<string, unknown>;
+      } catch {
+        const exact = extractExactInformationSummary(raw);
+        if (exact) yield { summary: exact, raw: item };
+        continue;
+      }
     }
-    if (arr.length === 0) {
+
+    if (parsed) {
+      let arr = getEmailLikeArray(parsed);
+      if (arr.length === 0 && raw) {
+        const topLevelArray = parseAsArray(raw);
+        if (topLevelArray) arr = topLevelArray;
+      }
+      if (arr.length > 0) {
+        for (const r of arr.slice(0, 20)) {
+          const fromObj = r.from ?? r.sender ?? r.from_email;
+          const from = fromObj && typeof fromObj === "object"
+            ? String((fromObj as { name?: string }).name ?? (fromObj as { email?: string }).email ?? "Unknown")
+            : String(fromObj ?? "Unknown");
+          const subj = String(r.subject ?? r.title ?? r.snippet ?? "").slice(0, 80);
+          const summary = subj ? `Email: "${subj}" from ${from}` : `Email from ${from}`;
+          yield { summary, raw: r };
+        }
+        continue;
+      }
+    }
+
+    if (raw && raw.length >= 2 && !isFollowUpOrError(raw)) {
       const exact = extractExactInformationSummary(raw);
       if (exact) yield { summary: exact, raw: item };
-      continue;
-    }
-    for (const r of arr.slice(0, 20)) {
-      const fromObj = r.from ?? r.sender ?? r.from_email;
-      const from = fromObj && typeof fromObj === "object"
-        ? String((fromObj as { name?: string }).name ?? (fromObj as { email?: string }).email ?? "Unknown")
-        : String(fromObj ?? "Unknown");
-      const subj = String(r.subject ?? r.title ?? r.snippet ?? "").slice(0, 80);
-      const summary = subj ? `Email: "${subj}" from ${from}` : `Email from ${from}`;
-      yield { summary, raw: r };
     }
   }
 }
@@ -159,8 +245,21 @@ function* contentToItems(content: unknown[], skipFollowUps = true): Generator<{ 
     const summary = itemToSummary(item);
     if (!summary) continue;
     if (skipFollowUps && isFollowUpOrError(summary)) continue;
+    if (isNonRiskNotification(summary)) continue;
+    const rawText = textFromRawItem(item).join(" ");
+    if (rawText && isNonRiskNotification(rawText)) continue;
     yield { summary, raw: item };
   }
+}
+
+/** Extract a stable external id from a raw item (e.g. Gmail id/message_id) for deduplication. */
+function getExternalId(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = o.id ?? o.message_id ?? o.messageId;
+  if (typeof id === "string" && id.trim()) return id.trim();
+  if (typeof id === "number") return String(id);
+  return null;
 }
 
 /** Only call tools that are read-style (find, search, list, get). Skip action tools (reply, send, remove, etc.). */
@@ -186,11 +285,11 @@ function getDefaultArgsForTool(toolName: string): Record<string, unknown> {
   const lower = toolName.toLowerCase();
   let instructions = "Return the 20 most recent items.";
   if (lower.includes("gmail_find") || lower.includes("gmail_find_email") || (lower.includes("gmail") && lower.includes("find"))) {
-    instructions = "Get my 20 most recent emails from my inbox and return their subject, snippet, and sender.";
+    instructions = "Get my 20 most recent emails from my inbox and return their subject, sender, date, snippet, and full message body (plain text if possible).";
   } else if (lower.includes("gmail") && (lower.includes("search") || lower.includes("get"))) {
-    instructions = "Search my Gmail for the 20 most recent emails in inbox and return their details.";
+    instructions = "Search my Gmail for the 20 most recent emails in inbox and return their subject, sender, date, snippet, and full message body (plain text if possible).";
   } else if (lower.includes("outlook") || lower.includes("microsoft")) {
-    instructions = "Get my 20 most recent emails from inbox and return their subject and body snippet.";
+    instructions = "Get my 20 most recent emails from inbox and return their subject, sender, date, snippet, and full message body (plain text if possible).";
   } else if (lower.includes("drive") && lower.includes("retrieve")) {
     instructions = "List my 20 most recently modified files or folders (or recent items I have access to).";
   } else if (lower.includes("list") || lower.includes("search") || lower.includes("find")) {
@@ -202,6 +301,9 @@ function getDefaultArgsForTool(toolName: string): Record<string, unknown> {
     max_results: 20,
     search_string: lower.includes("gmail") ? "in:inbox" : undefined,
     maxResults: 20,
+    // Some Zapier tools honor these hints; harmless if ignored.
+    include_body: lower.includes("mail") ? true : undefined,
+    includeBody: lower.includes("mail") ? true : undefined,
   };
 }
 
@@ -209,8 +311,9 @@ function getDefaultArgsForTool(toolName: string): Record<string, unknown> {
  * POST /api/risk/ingest
  * Calls each of the company's input-context Zapier MCP tools to fetch recent data (e.g. emails),
  * then stores results as IngestedEvent so Signals & Risk/Impact Analysis can show live signals.
+ * When autonomous agent has internalSignalMode "live", triggers a run for the newly created events.
  */
-export async function POST() {
+export async function POST(req: Request) {
   const session = await getSession();
   if (!session?.companyId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -297,12 +400,26 @@ export async function POST() {
             if (fallback.length === 200) fallback += "…";
           }
         }
-        if (fallback && !isFollowUpOrError(fallback)) {
+        const fallbackRelevant = fallback && !isFollowUpOrError(fallback) && !isNonRiskNotification(fallback)
+          ? (await classifyRiskRelevance([{ summary: fallback, raw: content[0] }]))[0]
+          : false;
+        if (fallbackRelevant) {
+          const externalId = getExternalId(content[0]);
+          if (externalId) {
+            const existing = await db.ingestedEvent.findFirst({
+              where: { companyId: session.companyId, toolName, externalId },
+            });
+            if (existing) {
+              toolResults.push({ name: toolName, status: "ok", count: 0 });
+              continue;
+            }
+          }
           const event = await db.ingestedEvent.create({
             data: {
               companyId: session.companyId,
               source,
               toolName,
+              externalId: externalId ?? undefined,
               rawContent: content as object,
               signalSummary: fallback,
             },
@@ -314,22 +431,66 @@ export async function POST() {
         }
         continue;
       }
-      toolResults.push({ name: toolName, status: "ok", count: items.length });
-      for (const { summary, raw } of items) {
+      const riskFlags = await classifyRiskRelevance(items);
+      const riskItems = items.filter((_, i) => riskFlags[i]);
+      let added = 0;
+      for (const { summary, raw } of riskItems) {
+        const externalId = getExternalId(raw);
+        if (externalId) {
+          const existing = await db.ingestedEvent.findFirst({
+            where: { companyId: session.companyId, toolName, externalId },
+          });
+          if (existing) continue;
+        }
         const event = await db.ingestedEvent.create({
           data: {
             companyId: session.companyId,
             source,
             toolName,
+            externalId: externalId ?? undefined,
             rawContent: (raw as object) ?? undefined,
             signalSummary: summary,
           },
         });
         created.push({ id: event.id, source, toolName });
+        added++;
       }
+      toolResults.push({ name: toolName, status: "ok", count: added });
     } catch (err) {
       console.error(`Zapier ingest failed for tool ${toolName}:`, err);
       toolResults.push({ name: toolName, status: "error", count: 0 });
+    }
+  }
+
+  // When internal signals are "live", trigger autonomous run for the new events so a case starts immediately.
+  if (created.length > 0 && session.companyId) {
+    try {
+      const config = await db.autonomousAgentConfig.findUnique({
+        where: { companyId: session.companyId },
+      });
+      const mode = (config as { internalSignalMode?: string } | null)?.internalSignalMode ?? "lookback";
+      const sources = config?.signalSources ?? "both";
+      const level = config?.automationLevel ?? "off";
+      if (
+        mode === "live" &&
+        (sources === "internal_only" || sources === "both") &&
+        level !== "off"
+      ) {
+        const base = process.env.NEXTAUTH_URL
+          || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+        const url = base.startsWith("http") ? base : `https://${base}`;
+        await fetch(`${url}/api/agents/autonomous/run`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Cookie: req.headers.get("cookie") ?? "",
+          },
+          body: JSON.stringify({ eventIds: created.map((e) => e.id) }),
+          cache: "no-store",
+        });
+      }
+    } catch (triggerErr) {
+      console.error("Ingest: failed to trigger autonomous run (live internal):", triggerErr);
     }
   }
 

@@ -17,27 +17,51 @@ function toPercent(n: number): number {
   return Math.min(100, Math.max(0, n * 100));
 }
 
+function severityColor(severity: string | undefined): { border: string; text: string } {
+  const s = (severity ?? "").toLowerCase();
+  if (s === "critical") return { border: "var(--danger)", text: "var(--danger)" };
+  if (s === "severe") return { border: "var(--warning)", text: "var(--warning)" };
+  if (s === "moderate") return { border: "var(--caution)", text: "var(--caution)" };
+  return { border: "var(--muted)", text: "var(--muted)" };
+}
+
 type Props = {
   archived: ArchivedOutput[];
   onReaddToActive?: (output: ArchivedOutput) => void;
+  onClearArchive?: () => void;
+  onDeleteItem?: (id: string) => void;
 };
 
-export function AssessmentArchiveSection({ archived, onReaddToActive }: Props) {
+export function AssessmentArchiveSection({ archived, onReaddToActive, onClearArchive, onDeleteItem }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  if (archived.length === 0) return null;
 
   // Newest first
   const sorted = [...archived].sort((a, b) => (b.sentAt > a.sentAt ? 1 : -1));
 
   return (
     <section className="card stack">
-      <h3>Archive (sent to mitigation)</h3>
-      <p className="muted text-sm" style={{ margin: 0 }}>
-        Assessments you’ve sent to mitigation. You can readd one to active outputs to send again or review.
-      </p>
+      <div className="row between" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "flex-start" }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Archive</h3>
+          <p className="muted text-sm" style={{ margin: "0.25rem 0 0 0" }}>
+        Sent to mitigation. Readd to send again.
+          </p>
+        </div>
+        {onClearArchive && archived.length > 0 && (
+          <button
+            type="button"
+            className="btn secondary btn-sm"
+            onClick={onClearArchive}
+            title="Remove all items from the archive"
+          >
+            Delete archive
+          </button>
+        )}
+      </div>
       <div className="stack-sm">
-        {sorted.map((out) => {
+        {archived.length === 0 ? (
+          <p className="muted text-sm" style={{ margin: 0 }}>No items in archive.</p>
+        ) : sorted.map((out) => {
           const a = out.assessment;
           const prob = a?.probability;
           const impact = a?.impact;
@@ -45,23 +69,40 @@ export function AssessmentArchiveSection({ archived, onReaddToActive }: Props) {
           const tw = out.timeWindow;
           const isExpanded = expandedId === out.id;
 
+          const sevColor = severityColor(impact?.severity);
           return (
             <div
               key={out.id}
               className="card-flat stack-sm"
-              style={{ padding: "0.75rem 1rem", borderLeftWidth: 3, borderLeftColor: "var(--muted)" }}
+              style={{ padding: "0.75rem 1rem", borderLeftWidth: 3, borderLeftColor: sevColor.border }}
             >
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "0.5rem" }}>
+              <div className="row between start gap-xs">
                 <div className="stack-xs">
-                  <span className="font-semibold text-sm">{out.issueTitle ?? out.triggerType}</span>
-                  <div className="row text-xs muted" style={{ flexWrap: "wrap", gap: "0.75rem" }}>
+                  <div className="row gap-xs" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                    <span className="font-semibold text-sm">{out.issueTitle ?? out.triggerType}</span>
+                    {out.source === "autonomous" && (
+                      <span
+                        className="text-xs"
+                        style={{
+                          padding: "0.15rem 0.5rem",
+                          borderRadius: 4,
+                          background: "var(--muted)",
+                          color: "var(--text)",
+                        }}
+                        title="Created by autonomous agent"
+                      >
+                        Autonomous
+                      </span>
+                    )}
+                  </div>
+                  <div className="row text-xs muted" style={{ gap: "0.75rem" }}>
                     {out.assessedAt && (
                       <span title={out.assessedAt}>Assessed {formatDate(out.assessedAt)}</span>
                     )}
                     <span title={out.sentAt}>Sent to mitigation {formatDate(out.sentAt)}</span>
                   </div>
                 </div>
-                <div className="row" style={{ gap: "0.5rem" }}>
+                <div className="row gap-xs">
                   {onReaddToActive && (
                     <button
                       type="button"
@@ -79,15 +120,25 @@ export function AssessmentArchiveSection({ archived, onReaddToActive }: Props) {
                   >
                     {isExpanded ? "Hide details" : "Show details"}
                   </button>
+                  {onDeleteItem && (
+                    <button
+                      type="button"
+                      className="btn secondary btn-sm"
+                      onClick={() => onDeleteItem(out.id)}
+                      title="Remove from archive"
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
               </div>
 
               {isExpanded && (
-                <div className="row" style={{ flexWrap: "wrap", gap: "1rem", alignItems: "flex-start", marginTop: "0.5rem" }}>
+                <div className="row start" style={{ gap: "1rem", marginTop: "0.5rem" }}>
                   {impact?.severity && (
                     <div>
                       <p className="text-xs uppercase muted" style={{ margin: 0 }}>Severity</p>
-                      <p className="text-sm font-medium" style={{ margin: "0.2rem 0 0 0", textTransform: "uppercase" }}>{String(impact.severity)}</p>
+                      <p className="text-sm font-medium" style={{ margin: "0.2rem 0 0 0", textTransform: "uppercase", color: sevColor.text }}>{String(impact.severity)}</p>
                     </div>
                   )}
                   {(prob?.pointEstimate != null || (prob?.bandLow != null && prob?.bandHigh != null)) && (
@@ -119,6 +170,30 @@ export function AssessmentArchiveSection({ archived, onReaddToActive }: Props) {
                         {tw?.startDate && String(tw.startDate)}
                         {tw?.expectedDurationDays != null && ` · ${tw.expectedDurationDays} days`}
                       </p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {isExpanded && (Array.isArray(a?.keyStakeholders) && a.keyStakeholders.length > 0 || Array.isArray(a?.potentialLosses) && a.potentialLosses.length > 0) && (
+                <div className="stack-xs" style={{ marginTop: "0.75rem" }}>
+                  {Array.isArray(a?.keyStakeholders) && a.keyStakeholders.length > 0 && (
+                    <div>
+                      <p className="text-xs uppercase muted" style={{ margin: "0 0 0.25rem 0" }}>Key stakeholders</p>
+                      <ul className="text-sm list-disc" style={{ margin: 0 }}>
+                        {a.keyStakeholders.map((s, i) => (
+                          <li key={i}>{s}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {Array.isArray(a?.potentialLosses) && a.potentialLosses.length > 0 && (
+                    <div>
+                      <p className="text-xs uppercase muted" style={{ margin: "0 0 0.25rem 0" }}>Potential losses</p>
+                      <ul className="text-sm list-disc" style={{ margin: 0 }}>
+                        {a.potentialLosses.map((l, i) => (
+                          <li key={i}>{l}</li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                 </div>

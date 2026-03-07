@@ -2,11 +2,27 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { ConfirmModal } from "@/components/ConfirmModal";
 
 /** Probability may be stored as 0–1 or 0–100; return 0–100 for display */
 function probabilityToPercent(n: number): number {
   if (n > 1) return Math.min(100, Math.max(0, n));
   return Math.min(100, Math.max(0, n * 100));
+}
+
+/** Cost delta: stored as multiplier (1.15 = +15%). If value > 10, LLM likely returned percent — show as percent and cap. */
+function formatCostDelta(cd: number | null | undefined): string {
+  if (cd == null) return "N/A";
+  if (cd > 10) return `${Math.min(500, Math.round(cd)).toFixed(0)}%`;
+  const pct = (cd * 100 - 100);
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`;
+}
+
+/** Service / Risk: stored as 0–1. If value > 1, LLM likely returned 0–100 — use as percent and cap. */
+function formatPercent01Or100(n: number | null | undefined): string {
+  if (n == null) return "N/A";
+  const pct = n > 1 ? Math.min(100, n) : n * 100;
+  return `${pct.toFixed(1)}%`;
 }
 
 type MitigationCardProps = { riskCase: any; archived?: boolean; /** For active cards: only first should be true so first is expanded by default */ defaultExpanded?: boolean };
@@ -25,6 +41,8 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<{ stepTitle: string; recipientOrEndpoint: string; payloadOrBody: string } | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [confirmDeleteCaseOpen, setConfirmDeleteCaseOpen] = useState(false);
+  const [confirmDeleteDraftOpen, setConfirmDeleteDraftOpen] = useState(false);
 
   const actions = Array.isArray(draftedPlan?.actions) ? draftedPlan.actions : [];
 
@@ -89,12 +107,13 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
     } catch { alert("Failed to execute plan"); } finally { setIsExecuting(false); }
   };
 
-  const handleDeleteDraft = async () => {
+  const handleDeleteDraftConfirm = async () => {
     if (!draftedPlan?.id || draftedPlan?.status === "EXECUTED") return;
     try {
       setDeletingDraft(true);
       const res = await fetch(`/api/mitigation-plans/${draftedPlan.id}`, { method: "DELETE" });
       if (res.ok) {
+        setConfirmDeleteDraftOpen(false);
         setDraftedPlan(null);
         setSelectedActionIndices(new Set());
         router.refresh();
@@ -105,14 +124,45 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
     } catch { alert("Failed to delete draft"); } finally { setDeletingDraft(false); }
   };
 
-  const handleDeleteCase = async (e: React.MouseEvent) => {
+  const handleRedraft = async () => {
+    if (!draftedPlan || draftedPlan?.status === "EXECUTED") return;
+    const scenarioId = draftedPlan.scenarioId ?? rc.scenarios?.[0]?.id;
+    if (!scenarioId) {
+      alert("No scenario to redraft from.");
+      return;
+    }
+    try {
+      setLoadingId(scenarioId);
+      if (draftedPlan.id) {
+        await fetch(`/api/mitigation-plans/${draftedPlan.id}`, { method: "DELETE" });
+      }
+      const res = await fetch("/api/agents/mitigation-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ riskCaseId: rc.id, scenarioId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setDraftedPlan(data.plan);
+        setSelectedActionIndices(new Set((data.plan?.actions ?? []).map((_: unknown, i: number) => i)));
+        router.refresh();
+      } else alert(data.error || "Failed to redraft");
+    } catch { alert("Failed to redraft"); } finally { setLoadingId(null); }
+  };
+
+  const openDeleteCaseConfirm = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!rc.id || deletingCase) return;
-    if (!confirm("Remove this mitigation plan? This cannot be undone.")) return;
+    setConfirmDeleteCaseOpen(true);
+  };
+
+  const handleDeleteCaseConfirm = async () => {
+    if (!rc.id) return;
     try {
       setDeletingCase(true);
       const res = await fetch(`/api/risk/cases/${rc.id}`, { method: "DELETE" });
       if (res.ok) {
+        setConfirmDeleteCaseOpen(false);
         router.refresh();
       } else {
         const data = await res.json().catch(() => ({}));
@@ -198,6 +248,8 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
   };
 
   const isExecuted = draftedPlan?.status === "EXECUTED";
+  /** Current case with a draft plan waiting for user to Approve & Fire — show warning so user knows confirmation is needed */
+  const needsConfirmation = !archived && !!draftedPlan && draftedPlan.status !== "EXECUTED";
 
   const isSuggestionType = (type: string) => type === "insight" || type === "recommendation";
   const totalExecutable = actions.filter((a: any) => !isSuggestionType(a?.type)).length;
@@ -205,7 +257,39 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
   const selectedCount = selectedActionIndices.size;
 
   return (
-    <section className="card stack-lg" style={{ opacity: isExecuted ? 0.75 : 1 }}>
+    <>
+      <ConfirmModal
+        open={confirmDeleteCaseOpen}
+        title="Delete mitigation plan"
+        message="Remove this mitigation plan? This cannot be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+        loading={deletingCase}
+        onConfirm={handleDeleteCaseConfirm}
+        onCancel={() => setConfirmDeleteCaseOpen(false)}
+      />
+      <ConfirmModal
+        open={confirmDeleteDraftOpen}
+        title="Delete draft"
+        message="Remove this draft plan? You can redraft from the same scenario later."
+        confirmLabel="Delete draft"
+        cancelLabel="Cancel"
+        variant="danger"
+        loading={deletingDraft}
+        onConfirm={handleDeleteDraftConfirm}
+        onCancel={() => setConfirmDeleteDraftOpen(false)}
+      />
+      <section
+        className="card stack-lg"
+        style={{
+          opacity: isExecuted ? 0.75 : 1,
+          ...(needsConfirmation && {
+            borderLeft: "4px solid var(--warning)",
+            background: "var(--warning-soft)",
+          }),
+        }}
+      >
       {/* Header */}
       <div
         className="row"
@@ -227,9 +311,24 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
             &gt;
           </span>
           <div>
-            <h3 style={{ display: "flex", alignItems: "center", gap: "0.4rem", textDecoration: isExecuted ? "line-through" : "none", margin: 0 }}>
+            <h3 style={{ display: "flex", alignItems: "center", gap: "0.4rem", textDecoration: isExecuted ? "line-through" : "none", margin: 0, flexWrap: "wrap" }}>
               <span className="dot danger" />
               {rc.triggerType?.toUpperCase?.() ?? "Risk"}
+              {(rc as { createdByAutonomousAgent?: boolean }).createdByAutonomousAgent && (
+                <span
+                  className="text-xs"
+                  style={{
+                    padding: "0.15rem 0.5rem",
+                    borderRadius: 4,
+                    background: "var(--muted)",
+                    color: "var(--text)",
+                    fontWeight: 500,
+                  }}
+                  title="Risk assessment created by autonomous agent"
+                >
+                  Autonomous
+                </span>
+              )}
             </h3>
             <p className="muted text-sm" style={{ marginTop: "0.2rem" }}>
               Confidence: <strong style={{ color: "var(--foreground)" }}>{rc.confidenceLevel || "N/A"}</strong> · Financial Risk:{" "}
@@ -252,7 +351,7 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
           <button
             type="button"
             className="btn secondary btn-sm"
-            onClick={handleDeleteCase}
+            onClick={openDeleteCaseConfirm}
             disabled={deletingCase}
             aria-label="Delete mitigation plan"
           >
@@ -423,19 +522,19 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
                       <div className="card-flat">
                         <p className="text-xs uppercase muted">Cost Delta</p>
                         <p className="text-sm font-semibold" style={{ color: s.costDelta != null && s.costDelta > 1 ? "var(--danger)" : "var(--success)" }}>
-                          {s.costDelta != null ? `${(s.costDelta * 100 - 100).toFixed(1)}%` : "N/A"}
+                          {formatCostDelta(s.costDelta)}
                         </p>
                       </div>
                       <div className="card-flat">
                         <p className="text-xs uppercase muted">Service</p>
                         <p className="text-sm font-semibold" style={{ color: s.serviceImpact != null && s.serviceImpact < 0 ? "var(--danger)" : "var(--success)" }}>
-                          {s.serviceImpact != null ? `${(s.serviceImpact * 100).toFixed(1)}%` : "N/A"}
+                          {formatPercent01Or100(s.serviceImpact)}
                         </p>
                       </div>
                       <div className="card-flat">
                         <p className="text-xs uppercase muted">Risk Reduction</p>
                         <p className="text-sm font-semibold">
-                          {s.riskReduction != null ? `${(s.riskReduction * 100).toFixed(1)}%` : "N/A"}
+                          {formatPercent01Or100(s.riskReduction)}
                         </p>
                       </div>
                     </div>
@@ -453,7 +552,7 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
                       </div>
                     )}
                   </div>
-                  <button onClick={() => handleExecute(s.id)} disabled={!!loadingId || !!draftedPlan} className={`btn${rec ? " primary" : ""} btn-sm`} style={{ width: "100%", marginTop: "auto" }}>
+                  <button onClick={() => handleExecute(s.id)} disabled={!!loadingId || !!draftedPlan} className={`btn ${rec ? "primary" : "secondary"} btn-sm`} style={{ width: "100%", marginTop: "auto" }}>
                     {loadingId === s.id ? "Drafting…" : draftedPlan ? "Drafted" : "Draft Execution"}
                   </button>
                 </div>
@@ -466,7 +565,24 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
       {/* Execution Draft */}
       {draftedPlan?.actions && (
         <div className="stack" style={{ borderTop: !isExecuted ? "1px solid var(--border)" : "none", paddingTop: !isExecuted ? "1rem" : 0 }}>
-          <h4>{isExecuted ? "Executed Playbook" : "Execution Draft"}</h4>
+          <h4 style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+            {isExecuted ? "Executed Memory" : "Execution Draft"}
+            {draftedPlan?.createdByAutonomousAgent && (
+              <span
+                className="text-xs"
+                style={{
+                  padding: "0.15rem 0.5rem",
+                  borderRadius: 4,
+                  background: "var(--muted)",
+                  color: "var(--text)",
+                  fontWeight: 500,
+                }}
+                title="Mitigation plan created by autonomous agent"
+              >
+                Autonomous
+              </span>
+            )}
+          </h4>
           {draftedPlan.summary && <p className="muted text-sm" style={{ margin: 0 }}>{draftedPlan.summary}</p>}
 
           <p className="text-sm muted" style={{ margin: 0 }}>
@@ -575,7 +691,16 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
               <button className="btn primary" onClick={handleApprove} disabled={isExecuting || executableCount === 0}>
                 {isExecuting ? "Executing…" : executableCount === 0 ? "Select steps to run" : executableCount === totalExecutable ? "Approve & Fire All" : `Execute ${executableCount} selected`}
               </button>
-              <button className="btn secondary" onClick={handleDeleteDraft} disabled={deletingDraft || isExecuting}>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={handleRedraft}
+                disabled={!!loadingId || deletingDraft || isExecuting}
+                title="Generate a new draft from the same scenario"
+              >
+                {loadingId ? "Redrafting…" : "Redraft"}
+              </button>
+              <button className="btn secondary" onClick={() => setConfirmDeleteDraftOpen(true)} disabled={deletingDraft || isExecuting}>
                 {deletingDraft ? "Deleting…" : "Delete draft"}
               </button>
             </div>
@@ -585,5 +710,6 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
         </>
       )}
     </section>
+    </>
   );
 }

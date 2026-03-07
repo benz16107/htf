@@ -12,7 +12,7 @@ export default async function SetupIntegrationsPage() {
 
   return (
     <main className="container-wide stack-xl">
-      <AppHeader title="Integrations" subtitle="Step 2 of 4 — Connect your tools via Zapier." />
+      <AppHeader title="Integrations" subtitle="Step 2 of 4" />
       <IntegrationsClient
         initialInputContextTools={inputContextTools}
         initialExecutionTools={executionTools}

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { SuggestedIntegrationsBox } from "@/components/SuggestedIntegrationsBox";
 import { ZapierMcpEmbed } from "@/components/ZapierMcpEmbed";
-import { getSuggestedZoneForTool, getSuggestedZoneLabel } from "@/lib/integration-tool-hint";
+import { getSuggestedZoneForTool, getSuggestedZoneLabel, groupToolsByApp } from "@/lib/integration-tool-hint";
 
 type Props = {
   initialInputContextTools: string[];
@@ -121,66 +121,168 @@ export default function IntegrationsClient({
             <div className="card integrations-zone">
               <div className="integrations-zone__header">
                 <h4>Input context retrieving</h4>
+                <div className="row" style={{ gap: "0.5rem", marginTop: "0.25rem" }}>
+                  <button
+                    type="button"
+                    className="btn secondary btn-sm"
+                    onClick={() => setInputContext(new Set(mcpTools.slice(0, 50).map((t) => t.name)))}
+                  >
+                    Select all
+                  </button>
+                  <button type="button" className="btn secondary btn-sm" onClick={() => setInputContext(new Set())}>
+                    Deselect all
+                  </button>
+                </div>
               </div>
               <p className="muted text-sm integrations-zone__desc">
                 The agent uses these tools to automatically retrieve context (e.g. inbox, CRM, ERP). No user interruption.
               </p>
               <div className="integrations-zone__list">
-                {mcpTools.slice(0, 50).map((tool) => {
-                  const suggested = getSuggestedZoneForTool(tool.name);
-                  const suggestedLabel = getSuggestedZoneLabel(suggested);
-                  const fitsInput = suggested === "input";
-                  return (
-                    <label key={tool.name} className="integrations-zone__item">
-                      <input
-                        type="checkbox"
-                        checked={inputContext.has(tool.name)}
-                        onChange={() => toggleInputContext(tool.name)}
-                      />
-                      <span className="integrations-zone__item-text">
-                        <span title={tool.description}>{tool.name}</span>
-                        {suggestedLabel && (
-                          <span className={`integrations-zone__hint ${fitsInput ? "integrations-zone__hint--input" : "integrations-zone__hint--execution"}`} title="Suggested based on tool name">
-                            {suggestedLabel}
-                          </span>
-                        )}
+                {groupToolsByApp(mcpTools.slice(0, 50)).map(({ appKey, appLabel, tools: appTools }) => (
+                  <details key={appKey} className="integrations-zone__group">
+                    <summary className="integrations-zone__group-summary">
+                      <span className="integrations-zone__group-title">{appLabel}</span>
+                      <span className="integrations-zone__group-meta">
+                        {appTools.reduce((acc, t) => acc + (inputContext.has(t.name) ? 1 : 0), 0)}/{appTools.length}
                       </span>
-                    </label>
-                  );
-                })}
+                      <span className="integrations-zone__group-actions">
+                        <button
+                          type="button"
+                          className="btn secondary btn-xs"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setInputContext((prev) => new Set([...prev, ...appTools.map((t) => t.name)]));
+                          }}
+                        >
+                          Select all
+                        </button>
+                        <button
+                          type="button"
+                          className="btn secondary btn-xs"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const names = new Set(appTools.map((t) => t.name));
+                            setInputContext((prev) => {
+                              const next = new Set(prev);
+                              for (const n of names) next.delete(n);
+                              return next;
+                            });
+                          }}
+                        >
+                          Clear
+                        </button>
+                      </span>
+                    </summary>
+                    {appTools.map((tool) => {
+                      const suggested = getSuggestedZoneForTool(tool.name);
+                      const suggestedLabel = getSuggestedZoneLabel(suggested);
+                      const fitsInput = suggested === "input";
+                      return (
+                        <label key={tool.name} className="integrations-zone__item">
+                          <input
+                            type="checkbox"
+                            checked={inputContext.has(tool.name)}
+                            onChange={() => toggleInputContext(tool.name)}
+                          />
+                          <span className="integrations-zone__item-text">
+                            <span title={tool.description}>{tool.name}</span>
+                            {suggestedLabel && (
+                              <span className={`integrations-zone__hint ${fitsInput ? "integrations-zone__hint--input" : "integrations-zone__hint--execution"}`} title="Suggested based on tool name">
+                                {suggestedLabel}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </details>
+                ))}
               </div>
             </div>
 
             <div className="card integrations-zone">
               <div className="integrations-zone__header">
                 <h4>Execution</h4>
+                <div className="row" style={{ gap: "0.5rem", marginTop: "0.25rem" }}>
+                  <button
+                    type="button"
+                    className="btn secondary btn-sm"
+                    onClick={() => setExecution(new Set(mcpTools.slice(0, 50).map((t) => t.name)))}
+                  >
+                    Select all
+                  </button>
+                  <button type="button" className="btn secondary btn-sm" onClick={() => setExecution(new Set())}>
+                    Deselect all
+                  </button>
+                </div>
               </div>
               <p className="muted text-sm integrations-zone__desc">
                 The agent can use these tools to take action via mitigation plans (e.g. draft and send email to supplier, update a ticket). Archive, send, draft, reply belong here—not in input.
               </p>
               <div className="integrations-zone__list">
-                {mcpTools.slice(0, 50).map((tool) => {
-                  const suggested = getSuggestedZoneForTool(tool.name);
-                  const suggestedLabel = getSuggestedZoneLabel(suggested);
-                  const fitsExecution = suggested === "execution";
-                  return (
-                    <label key={tool.name} className="integrations-zone__item">
-                      <input
-                        type="checkbox"
-                        checked={execution.has(tool.name)}
-                        onChange={() => toggleExecution(tool.name)}
-                      />
-                      <span className="integrations-zone__item-text">
-                        <span title={tool.description}>{tool.name}</span>
-                        {suggestedLabel && (
-                          <span className={`integrations-zone__hint ${fitsExecution ? "integrations-zone__hint--execution" : "integrations-zone__hint--input"}`} title="Suggested based on tool name">
-                            {suggestedLabel}
-                          </span>
-                        )}
+                {groupToolsByApp(mcpTools.slice(0, 50)).map(({ appKey, appLabel, tools: appTools }) => (
+                  <details key={appKey} className="integrations-zone__group">
+                    <summary className="integrations-zone__group-summary">
+                      <span className="integrations-zone__group-title">{appLabel}</span>
+                      <span className="integrations-zone__group-meta">
+                        {appTools.reduce((acc, t) => acc + (execution.has(t.name) ? 1 : 0), 0)}/{appTools.length}
                       </span>
-                    </label>
-                  );
-                })}
+                      <span className="integrations-zone__group-actions">
+                        <button
+                          type="button"
+                          className="btn secondary btn-xs"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setExecution((prev) => new Set([...prev, ...appTools.map((t) => t.name)]));
+                          }}
+                        >
+                          Select all
+                        </button>
+                        <button
+                          type="button"
+                          className="btn secondary btn-xs"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const names = new Set(appTools.map((t) => t.name));
+                            setExecution((prev) => {
+                              const next = new Set(prev);
+                              for (const n of names) next.delete(n);
+                              return next;
+                            });
+                          }}
+                        >
+                          Clear
+                        </button>
+                      </span>
+                    </summary>
+                    {appTools.map((tool) => {
+                      const suggested = getSuggestedZoneForTool(tool.name);
+                      const suggestedLabel = getSuggestedZoneLabel(suggested);
+                      const fitsExecution = suggested === "execution";
+                      return (
+                        <label key={tool.name} className="integrations-zone__item">
+                          <input
+                            type="checkbox"
+                            checked={execution.has(tool.name)}
+                            onChange={() => toggleExecution(tool.name)}
+                          />
+                          <span className="integrations-zone__item-text">
+                            <span title={tool.description}>{tool.name}</span>
+                            {suggestedLabel && (
+                              <span className={`integrations-zone__hint ${fitsExecution ? "integrations-zone__hint--execution" : "integrations-zone__hint--input"}`} title="Suggested based on tool name">
+                                {suggestedLabel}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </details>
+                ))}
               </div>
             </div>
           </div>
@@ -193,6 +295,7 @@ export default function IntegrationsClient({
         )}
 
         <form action="/api/setup/integrations" method="post" className="stack integrations-zones__form" onSubmit={() => setIsSubmitting(true)}>
+          <input type="hidden" name="redirectTo" defaultValue="" />
           {Array.from(inputContext).map((c) => (
             <input key={`in-${c}`} type="hidden" name="inputContextTools" value={c} />
           ))}
@@ -203,7 +306,17 @@ export default function IntegrationsClient({
             <button type="submit" className="btn primary" disabled={isSubmitting}>
               {isSubmitting ? "Saving…" : "Confirm & next"}
             </button>
-            <button type="submit" name="redirectTo" value="dashboard" className="btn secondary" disabled={isSubmitting}>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={isSubmitting}
+              onClick={(e) => {
+                const form = (e.target as HTMLButtonElement).form;
+                const redirectInput = form?.querySelector<HTMLInputElement>('input[name="redirectTo"]');
+                if (redirectInput) redirectInput.value = "dashboard";
+                form?.requestSubmit();
+              }}
+            >
               {isSubmitting ? "Saving…" : "Save and go to dashboard"}
             </button>
             <Link className="btn secondary" href="/setup/high-level">Skip for now</Link>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { SelectedSignal, AssessmentOutput } from "./types";
 
 type Props = {
@@ -15,6 +15,11 @@ export function RiskAssessmentSection({
   onOutput,
 }: Props) {
   const [loading, setLoading] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const internalSignals = selectedSignals.filter((s) => s.type === "internal");
   const externalSignals = selectedSignals.filter((s) => s.type === "external");
@@ -49,7 +54,7 @@ export function RiskAssessmentSection({
           .join("\n");
 
   const handleRunAssessment = async () => {
-        if (selectedSignals.length === 0) {
+    if (selectedSignals.length === 0) {
       alert("Add at least one signal (external, internal, or manual case) above, then run assessment.");
       return;
     }
@@ -80,7 +85,9 @@ export function RiskAssessmentSection({
       });
 
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success && data.riskAssessment) {
+      if (!mounted.current) return;
+
+      if (res.ok && data.riskAssessment) {
         const output: AssessmentOutput = {
           id: `output-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           triggerType: "Risk assessment (selected signals)",
@@ -104,26 +111,24 @@ export function RiskAssessmentSection({
         alert(data.error || "Risk assessment failed.");
       }
     } catch {
-      alert("Network error.");
+      if (mounted.current) alert("Network error.");
     } finally {
-      setLoading(false);
+      if (mounted.current) setLoading(false);
     }
   };
 
   return (
     <section className="card stack">
       <h3>Risk assessment</h3>
-      <p className="muted text-sm" style={{ margin: 0 }}>
-        Add signals from the sections above, then run assessment. The result appears in Assessment outputs below; from there you can send to mitigation or run another assessment.
-      </p>
+      <p className="muted text-sm">Add signals above, then run assessment. Results appear in Assessment outputs.</p>
       {selectedSignals.length > 0 ? (
-        <div className="card-flat stack-sm" style={{ padding: "0.75rem" }}>
+        <div className="card-flat stack-sm pad-sm">
           <span className="text-sm font-medium">Signals in this assessment ({selectedSignals.length})</span>
-          <ul className="stack-xs" style={{ listStyle: "none", padding: 0, margin: 0, maxHeight: "12rem", overflowY: "auto" }}>
+          <ul className="stack-xs list-reset scroll-12">
             {selectedSignals.map((s) => (
-              <li key={s.id} className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
-                <span className="text-sm" style={{ minWidth: 0 }} title={s.summary}>
-                  <span className="badge" style={{ marginRight: "0.35rem" }}>{s.type}</span>
+              <li key={s.id} className="row between gap-xs">
+                <span className="text-sm min-w-0" title={s.summary}>
+                  <span className="badge mr-2xs">{s.type}</span>
                   {s.summary.slice(0, 60)}{s.summary.length > 60 ? "…" : ""}
                 </span>
                 <button
@@ -139,7 +144,7 @@ export function RiskAssessmentSection({
           </ul>
         </div>
       ) : (
-        <p className="muted text-sm" style={{ margin: 0 }}>No signals added yet. Add external or internal signals above, or type a manual case in Manual preventive check and add it here.</p>
+        <p className="muted text-sm">No signals yet. Add from External/Internal signal or Manual case above.</p>
       )}
       <button
         type="button"

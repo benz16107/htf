@@ -1,5 +1,6 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getSession, hasCompletedSetup } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 
 export default async function SetupLayout({
   children,
@@ -12,14 +13,37 @@ export default async function SetupLayout({
     redirect("/sign-in");
   }
 
-  const setupComplete = await hasCompletedSetup();
-
-  // Returning users should still be able to revisit any step of the setup
-  // flow (e.g. to add connectors).  We no longer redirect to dashboard here;
-  // the dashboard itself provides a link when appropriate.
-  // if (setupComplete) {
-  //   redirect("/dashboard");
-  // }
-
-  return children;
+  return (
+    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
+      <header
+        style={{
+          padding: "var(--space-4) var(--space-6)",
+          borderBottom: "1px solid var(--border)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "var(--space-3)",
+        }}
+      >
+        <Link
+          href="/"
+          className="row gap-2xs"
+          style={{ textDecoration: "none", color: "inherit", alignItems: "center" }}
+        >
+          <div className="sidebar-logo-mark" />
+          <span style={{ fontWeight: 700, fontSize: "1.0625rem", letterSpacing: "-0.03em" }}>
+            PENTAGON
+          </span>
+          <span className="muted text-sm" style={{ marginLeft: "var(--space-2)" }}>
+            Setup
+          </span>
+        </Link>
+        <Link href="/dashboard" className="btn secondary btn-sm">
+          Dashboard
+        </Link>
+      </header>
+      {children}
+    </div>
+  );
 }

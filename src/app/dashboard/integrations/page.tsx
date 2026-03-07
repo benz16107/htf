@@ -12,7 +12,7 @@ export default async function DashboardIntegrationsPage() {
 
   return (
     <div className="stack-xl" style={{ maxWidth: 1100 }}>
-      <AppHeader title="Integrations" subtitle="Manage your Zapier connectors." />
+      <AppHeader title="Integrations" />
       <IntegrationsDashboardClient
         initialInputContextTools={inputContextTools}
         initialExecutionTools={executionTools}

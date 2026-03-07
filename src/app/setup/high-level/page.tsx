@@ -13,6 +13,15 @@ const profileParts = [
   "ERP signal monitoring",
 ];
 
+const sectionKeys = [
+  "riskClassification",
+  "leadTimeSensitivity",
+  "inventoryBufferPolicies",
+  "contractStructures",
+  "customerSLAProfile",
+  "erpSignalMonitoring",
+];
+
 type SectionAnalysis = { reasoning: string; summary: string; warning: string };
 
 export default function HighLevelSetupPage() {
@@ -21,19 +30,24 @@ export default function HighLevelSetupPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState("");
 
   useEffect(() => {
     fetch("/api/setup/high-level")
       .then((r) => r.json())
       .then((data) => {
-        if (!data) return;
+        if (!data || typeof data !== "object") return;
         const loaded: Record<number, SectionAnalysis> = {};
-        Object.entries(data).forEach(([key, value]) => {
-          const idx = profileParts.findIndex((p) => key.toLowerCase().includes(p.replace(/\s+/g, "").toLowerCase()));
-          if (idx !== -1 && value) loaded[idx] = { reasoning: "", summary: String(value), warning: "" };
+        sectionKeys.forEach((key, idx) => {
+          const value = (data as Record<string, unknown>)[key];
+          if (value != null && String(value).trim() !== "")
+            loaded[idx] = { reasoning: "", summary: String(value).trim(), warning: "" };
         });
-        if (Object.keys(loaded).length) setSections((prev) => ({ ...prev, ...loaded }));
+        if (Object.keys(loaded).length > 0) {
+          setSections((prev) => ({ ...prev, ...loaded }));
+          setIsStarted(true);
+        }
       })
       .catch(() => {});
   }, []);
@@ -75,18 +89,40 @@ export default function HighLevelSetupPage() {
       ...prev,
       [index]: { ...(prev[index] || { warning: "", reasoning: "" }), summary: value },
     }));
+    setSaveStatus("idle");
+  };
+
+  const handleSave = async () => {
+    setSaveStatus("saving");
+    try {
+      const formData = new FormData();
+      for (let i = 0; i < profileParts.length; i++) {
+        formData.append("sections", sections[i]?.summary ?? "");
+      }
+      const res = await fetch("/api/setup/high-level", {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: formData,
+      });
+      if (res.ok) {
+        setSaveStatus("saved");
+        setTimeout(() => setSaveStatus("idle"), 2000);
+      } else setSaveStatus("error");
+    } catch {
+      setSaveStatus("error");
+    }
   };
 
   return (
     <main className="container stack-xl">
-      <AppHeader title="High-Level Profile" subtitle="Step 3 of 4 — AI determines your risk baselines and tolerances." />
+      <AppHeader title="High-level profile" subtitle="Step 3 of 4" />
 
       <section className="card stack-lg">
         {!isStarted && (
-          <div className="empty-state" style={{ padding: "2.5rem 1.5rem" }}>
+          <div className="empty-state pad-lg">
             <h3>Ready to build your profile?</h3>
             <p>The agent will analyze all {profileParts.length} dimensions of your supply chain in one pass.</p>
-            <button className="btn primary" style={{ marginTop: "1.5rem" }} onClick={startAnalysis} disabled={isAnalyzing}>
+            <button className="btn primary mt-lg" onClick={startAnalysis} disabled={isAnalyzing}>
               {isAnalyzing ? "Analyzing all sections…" : "Analyze with AI"}
             </button>
           </div>
@@ -94,10 +130,20 @@ export default function HighLevelSetupPage() {
 
         {isStarted && (
           <form className="stack-lg" action="/api/setup/high-level" method="post" onSubmit={() => setIsSubmitting(true)}>
+            <input type="hidden" name="redirectTo" defaultValue="" />
+            <div className="row gap-xs mb-sm">
+              <button
+                type="button"
+                className="btn secondary btn-sm"
+                onClick={startAnalysis}
+                disabled={isAnalyzing}
+              >
+                {isAnalyzing ? "Analyzing…" : "Reanalyze with AI"}
+              </button>
+              <span className="muted text-xs">Run the agent again to regenerate all sections (save first to keep edits).</span>
+            </div>
             {isAnalyzing && (
-              <p className="muted text-sm" style={{ marginBottom: "0.5rem" }}>
-                Analyzing all sections… this may take a moment.
-              </p>
+              <p className="muted text-sm mb-xs">Analyzing all sections… this may take a moment.</p>
             )}
             {profileParts.map((part, index) => {
               const sec = sections[index];
@@ -113,7 +159,7 @@ export default function HighLevelSetupPage() {
 
               return (
                 <div key={part} className="card-flat stack-sm">
-                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                  <div className="row between">
                     <div className="stack-sm" style={{ flex: 1 }}>
                       <span className="text-xs uppercase muted">
                         Step {index + 1} of {profileParts.length}
@@ -122,7 +168,7 @@ export default function HighLevelSetupPage() {
                         {part}
                       </span>
                     </div>
-                    <div className="row" style={{ gap: "0.4rem" }}>
+                    <div className="row gap-2xs">
                       {isDone && <span className="badge success">Profiled</span>}
                       {!isDone && isAnalyzing && <span className="badge accent">Analyzing…</span>}
                     </div>
@@ -131,7 +177,7 @@ export default function HighLevelSetupPage() {
                   {sec ? (
                     <div className="stack-sm">
                       {/* Transparency strip */}
-                      <div className="row" style={{ gap: "0.4rem", flexWrap: "wrap" }}>
+                      <div className="row gap-2xs">
                         <span className="badge text-xs">
                           Evidence: {hasWarning ? "needs more input" : "sufficient for now"}
                         </span>
@@ -144,7 +190,7 @@ export default function HighLevelSetupPage() {
                       {summaryBullets.length > 0 && (
                         <div className="stack-sm">
                           <p className="text-xs uppercase muted">Key points</p>
-                          <ul className="text-sm" style={{ paddingLeft: "1.1rem", lineHeight: 1.5 }}>
+                          <ul className="text-sm list-disc">
                             {summaryBullets.map((line, i) => (
                               <li key={i}>{line}</li>
                             ))}
@@ -154,21 +200,16 @@ export default function HighLevelSetupPage() {
 
                       {/* Agent rationale */}
                       {sec.reasoning && (
-                        <details className="text-sm" style={{ marginTop: "0.25rem" }}>
-                          <summary className="muted text-xs" style={{ cursor: "pointer" }}>
+                        <details className="text-sm inline-details mt-2xs">
+                          <summary className="muted text-xs">
                             Why the agent chose this
                           </summary>
-                          <p
-                            className="text-sm muted"
-                            style={{ borderLeft: "2px solid var(--border)", paddingLeft: "0.75rem", marginTop: "0.35rem", fontStyle: "italic" }}
-                          >
-                            {sec.reasoning}
-                          </p>
+                          <p className="text-sm callout mt-2xs">{sec.reasoning}</p>
                         </details>
                       )}
 
                       {/* Manual edit textarea */}
-                      <label className="field" style={{ marginTop: "0.5rem" }}>
+                      <label className="field mt-xs">
                         Edit summary (optional)
                         <textarea
                           name="sections"
@@ -179,7 +220,7 @@ export default function HighLevelSetupPage() {
                       </label>
 
                       {sec.warning && (
-                        <p className="text-sm" style={{ color: "var(--warning)" }}>
+                        <p className="text-sm text-warning">
                           Warning: {sec.warning}
                         </p>
                       )}
@@ -193,13 +234,33 @@ export default function HighLevelSetupPage() {
               );
             })}
 
-            {error && <p className="text-sm" style={{ color: "var(--danger)" }}>{error}</p>}
+            {error && <p className="text-sm text-danger">{error}</p>}
 
-            <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+            <div className="row gap-xs">
+              <button
+                type="button"
+                className="btn secondary btn-sm"
+                onClick={handleSave}
+                disabled={Object.keys(sections).length === 0 || saveStatus === "saving"}
+              >
+                {saveStatus === "saving" ? "Saving…" : "Save"}
+              </button>
+              {saveStatus === "saved" && <span className="text-sm text-success">Saved</span>}
+              {saveStatus === "error" && <span className="text-sm text-danger">Save failed</span>}
               <button className="btn primary" type="submit" disabled={(Object.keys(sections).length === 0 && !error) || isSubmitting}>
                 {isSubmitting ? "Saving…" : "Confirm & next"}
               </button>
-              <button className="btn secondary" type="submit" name="redirectTo" value="dashboard" disabled={(Object.keys(sections).length === 0 && !error) || isSubmitting}>
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={(Object.keys(sections).length === 0 && !error) || isSubmitting}
+                onClick={(e) => {
+                  const form = (e.target as HTMLButtonElement).form;
+                  const redirectInput = form?.querySelector<HTMLInputElement>('input[name="redirectTo"]');
+                  if (redirectInput) redirectInput.value = "dashboard";
+                  form?.requestSubmit();
+                }}
+              >
                 {isSubmitting ? "Saving…" : "Save and go to dashboard"}
               </button>
               <Link className="btn secondary" href="/setup/review">Skip to review</Link>

@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { callZapierMCPTool } from "@/server/zapier/mcp-client";
-import { getZapierMCPConfigForCompany, getZapierMCPToolSelections } from "@/server/zapier/mcp-config";
+import { getZapierMCPToolSelections } from "@/server/zapier/mcp-config";
+import { fetchLiveContextFromZapier, DEFAULT_MAX_LIVE_CONTEXT_CHARS } from "@/server/zapier/live-context";
 
 const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY || "",
@@ -20,109 +20,6 @@ const profileParts = [
     "Customer SLA profile",
     "ERP signal monitoring",
 ];
-
-const MAX_LIVE_CONTEXT_CHARS = 6000;
-
-function isReadOnlyTool(toolName: string): boolean {
-    const lower = toolName.toLowerCase();
-    const readPatterns = ["find", "search", "list", "get", "fetch", "read", "retrieve"];
-    const actionPatterns = ["reply", "send", "remove", "add", "create", "update", "delete", "mark", "move", "label"];
-    if (actionPatterns.some((a) => lower.includes(a))) return false;
-    return readPatterns.some((r) => lower.includes(r));
-}
-
-function getProfileContextArgs(toolName: string): Record<string, unknown> {
-    const lower = toolName.toLowerCase();
-    let instructions = "Return up to 15 recent items that could inform supply chain, risk, or operations (e.g. orders, suppliers, shipments, meetings). Include subject/title and key details.";
-    if (lower.includes("gmail") && (lower.includes("find") || lower.includes("search"))) {
-        instructions = "Get my 15 most recent emails from inbox that might relate to suppliers, orders, or logistics. Return subject, sender, and a short snippet.";
-    } else if (lower.includes("outlook") || lower.includes("microsoft")) {
-        instructions = "Get my 15 most recent emails that could relate to supply chain or operations. Return subject and snippet.";
-    } else if (lower.includes("slack")) {
-        instructions = "Return up to 15 recent messages or threads that might relate to operations, suppliers, or risk. Include channel and summary.";
-    } else if (lower.includes("calendar")) {
-        instructions = "Return up to 15 upcoming or recent calendar events that might relate to supply chain or vendor meetings.";
-    } else if (lower.includes("drive") || lower.includes("sheet")) {
-        instructions = "List or summarize up to 15 recent items (files, rows) that could inform supply chain or operations.";
-    } else if (lower.includes("crm") || lower.includes("salesforce") || lower.includes("hubspot")) {
-        instructions = "Return up to 15 recent records or activities that could inform customer demand, orders, or supply chain.";
-    }
-    return { instructions, limit: 15, max_results: 15, maxResults: 15 };
-}
-
-function summarizeContentItem(item: unknown): string | null {
-    let raw: string | null = null;
-    if (item && typeof item === "object" && "text" in item && typeof (item as { text: unknown }).text === "string") {
-        raw = (item as { text: string }).text.trim();
-    } else if (typeof item === "string") {
-        raw = item.trim();
-    }
-    if (!raw || raw.length < 2) return null;
-    if (raw.startsWith("{") && (raw.includes("followUpQuestion") || raw.includes("isPreview"))) return null;
-    try {
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        const arr = (parsed.results ?? parsed.data ?? parsed.items ?? parsed.emails) as unknown[] | undefined;
-        if (Array.isArray(arr) && arr.length > 0) {
-            const lines: string[] = [];
-            for (const it of arr.slice(0, 10)) {
-                if (it && typeof it === "object") {
-                    const o = it as Record<string, unknown>;
-                    const subj = typeof o.subject === "string" ? o.subject : typeof o.title === "string" ? o.title : typeof o.name === "string" ? o.name : undefined;
-                    const from = o.from && typeof o.from === "object" ? String((o.from as { email?: string }).email ?? (o.from as { name?: string }).name ?? "") : undefined;
-                    if (subj) lines.push(from ? `"${subj.slice(0, 60)}" from ${from}` : subj.slice(0, 80));
-                    else lines.push(JSON.stringify(o).slice(0, 80));
-                }
-            }
-            return lines.join(" · ");
-        }
-        const subj = parsed.subject ?? parsed.title ?? parsed.name;
-        if (typeof subj === "string") return subj.slice(0, 200);
-    } catch {
-        // not JSON
-    }
-    return raw.slice(0, 300);
-}
-
-async function fetchLiveContextFromZapier(companyId: string): Promise<string> {
-    const config = await getZapierMCPConfigForCompany(companyId);
-    const toolSelections = await getZapierMCPToolSelections(companyId);
-    const inputTools = toolSelections.inputContextTools ?? [];
-    if (!config || inputTools.length === 0) return "";
-
-    const readOnly = inputTools.filter((t) => isReadOnlyTool(t));
-    if (readOnly.length === 0) return "";
-
-    const parts: string[] = [];
-    let totalChars = 0;
-
-    for (const toolName of readOnly) {
-        if (totalChars >= MAX_LIVE_CONTEXT_CHARS) break;
-        try {
-            const args = getProfileContextArgs(toolName);
-            const result = await callZapierMCPTool(config, toolName, args);
-            if (result.isError || !result.content?.length) continue;
-
-            const source = toolName.split(":")[0]?.trim() || toolName;
-            const lines: string[] = [];
-            for (const item of result.content) {
-                const sum = summarizeContentItem(item);
-                if (sum) lines.push(sum);
-            }
-            if (lines.length > 0) {
-                const block = `[${source}]\n${lines.join("\n")}`;
-                const take = Math.min(block.length, MAX_LIVE_CONTEXT_CHARS - totalChars - 50);
-                if (take > 0) {
-                    parts.push(block.slice(0, take));
-                    totalChars += take;
-                }
-            }
-        } catch (err) {
-            console.error(`High-level profile: Zapier fetch failed for ${toolName}:`, err);
-        }
-    }
-
-    return parts.length > 0 ? parts.join("\n\n") : "";
-}
 
 function generateSimulatedContext(integrations: string[]): string {
     if (!integrations || integrations.length === 0) return "No live system data available.";
@@ -198,10 +95,14 @@ export async function POST(request: Request) {
         const integrationNames = [...new Set([...toolSelections.inputContextTools, ...toolSelections.executionTools])];
         const integrationsList = integrationNames.length > 0 ? integrationNames.join(", ") : "None";
 
-        const liveDataFromZapier = await fetchLiveContextFromZapier(session.companyId);
+        const liveDataFromZapier = await fetchLiveContextFromZapier(session.companyId, DEFAULT_MAX_LIVE_CONTEXT_CHARS);
         const simulatedContext = generateSimulatedContext(integrationNames);
+        const mcpIntegrationNote =
+          integrationNames.length > 0
+            ? `Your company has MCP-connected integrations available as data sources: ${integrationNames.join(", ")}. The live data below was retrieved from these; each block is labeled by source (e.g. [Gmail], [Google Sheets]).`
+            : "";
         const liveSystemContextBlock = liveDataFromZapier
-            ? `Live data retrieved from your connected apps (Zapier — use this when relevant to each dimension):\n${liveDataFromZapier}\n\nAdditional context from connected integrations (if no live data above, use as reference):\n${simulatedContext}`
+            ? `${mcpIntegrationNote ? mcpIntegrationNote + "\n\n" : ""}Live data from MCP integrations (use only what is relevant to each dimension):\n${liveDataFromZapier}\n\nAdditional context from connected integrations (if no live data above, use as reference):\n${simulatedContext}`
             : `Live System Context (simulated from integrations):\n${simulatedContext}`;
 
         const sectionsList = profileParts.map((p, i) => `${i}. ${p}`).join("\n");
@@ -220,13 +121,13 @@ Connected integrations: ${integrationsList || "None"}
 ${liveSystemContextBlock}
 
 Task:
-Analyze and generate the profile for ALL of the following dimensions in one pass. Use the company context and the live data / system context above. When live data from Zapier is present, use it to inform risk, lead times, SLAs, and operations where relevant. For each dimension provide deep, specific analysis.
+Analyze and generate the profile for ALL of the following dimensions in one pass. All integrations above are connected via MCP; the live data was pulled from them. For each dimension: (1) reason which MCP sources (e.g. Gmail, Google Sheets, Slack) are relevant to that dimension, (2) identify the specific excerpts in the live data that apply, and (3) use only those to inform your analysis. Ignore irrelevant data. If no live data is relevant to a dimension, use the base profile and simulated context.
 
 Dimensions to analyze:
 ${sectionsList}
 
 Rules:
-1. For each dimension, reason step-by-step how you inferred or determined the details based on the base profile AND the live data / system context above.
+1. For each dimension, reason step-by-step: which connected services are relevant, which parts of the live data you used, and how you inferred the details. Base your summary only on relevant evidence.
 2. Provide a clear, professional summary per dimension.
 3. If there is insufficient data for a dimension, set "warning" to a short message; otherwise leave "warning" empty.
 
@@ -247,10 +148,10 @@ Connected integrations: ${integrationsList || "None"}
 ${liveSystemContextBlock}
 
 Task:
-Analyze and generate the profile for: **${profileParts[stepIndex!]}**. Provide deep, specific analysis using the live data and system context above when relevant.
+Analyze and generate the profile for: **${profileParts[stepIndex!]}**. The live data above comes from your MCP-connected integrations. Reason which source(s) and which excerpts are relevant to this dimension; use only those. If none are relevant, use the base profile and simulated context.
 
 Rules:
-1. Reason step-by-step how you inferred or determined these details based on the base profile AND the live system context.
+1. Reason step-by-step: which integration(s) and which parts of the live data are relevant; how you inferred the details from that evidence.
 2. Provide a clear, professional summary.
 3. If there is insufficient data, explicitly state a warning.
 

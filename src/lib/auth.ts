@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 
-export type AppRole = "OWNER";
+export type AppRole = "OWNER" | "ADMIN" | "OPERATOR" | "VIEWER";
 export type AuthMode = "credentials";
 export type CompanyAccountAccess = "OWNER";
 

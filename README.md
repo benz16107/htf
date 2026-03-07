@@ -7,6 +7,10 @@ Multi-tenant supply chain risk platform with:
 - Session-based traceability foundations for explainable agent reasoning
 - Prisma data model for companies, sessions, traces, risk cases, scenarios, and policies
 
+## Design
+
+Token-based design system in `src/app/globals.css`. A Pencil design kit is in **`designs/htf-design-kit.pen`**—open it in the [Pencil extension](https://pencil.dev) to edit variables and designs. See `DESIGN_SYSTEM.md` for token reference and sync notes.
+
 ## Stack
 
 - Next.js (App Router) + TypeScript

@@ -31,7 +31,7 @@ export default async function SetupReviewPage() {
 
   return (
     <main className="container stack-xl">
-      <AppHeader title="Review Setup" subtitle="Step 4 of 4 — Confirm everything before entering the dashboard." />
+      <AppHeader title="Review setup" subtitle="Step 4 of 4" />
 
       <section className="grid two" style={{ alignItems: "start" }}>
         <article className="card stack">
@@ -77,9 +77,9 @@ export default async function SetupReviewPage() {
 
         <hr className="divider" />
         <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-          <Link className="btn btn-sm" href="/setup/baselayer">Edit base</Link>
-          <Link className="btn btn-sm" href="/setup/integrations">Edit integrations</Link>
-          <Link className="btn btn-sm" href="/setup/high-level">Edit high-level</Link>
+          <Link className="btn secondary btn-sm" href="/setup/baselayer">Edit base</Link>
+          <Link className="btn secondary btn-sm" href="/setup/integrations">Edit integrations</Link>
+          <Link className="btn secondary btn-sm" href="/setup/high-level">Edit high-level</Link>
           <ConfirmSetupButton />
           <Link className="btn secondary btn-sm" href="/dashboard">Go to dashboard</Link>
         </div>

@@ -126,12 +126,14 @@ export function EventFusionLog() {
   };
 
   return (
-    <section className="card stack" style={{ padding: 0 }}>
-      <div className="row" style={{ justifyContent: "space-between", padding: "1.25rem 1.25rem 0.75rem", borderBottom: "1px solid var(--border)" }}>
-        <h3 style={{ margin: 0 }}>Event Fusion Log</h3>
-        <div className="row" style={{ gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+    <section className="card stack collapsible-card">
+      <div className="collapsible-card__header" style={{ cursor: "default" }}>
+        <div className="collapsible-card__title">
+          <h3 style={{ margin: 0 }}>Event Fusion Log</h3>
+        </div>
+        <div className="collapsible-card__header-actions">
           <span className="badge accent">Live</span>
-          <label className="row" style={{ alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.875rem" }}>
+          <label className="row gap-xs" style={{ cursor: "pointer", fontSize: "0.875rem" }}>
             <input
               type="checkbox"
               checked={autoScan}
@@ -156,32 +158,25 @@ export function EventFusionLog() {
       </div>
       {error && (
         <div className="card-flat stack-xs" style={{ margin: "0.75rem", padding: "0.5rem 0.75rem", borderColor: "var(--danger)" }}>
-          <p className="text-sm" style={{ color: "var(--danger)", margin: 0 }}>{error}</p>
-          {error.includes("Zapier") || error.includes("input-context") || error.includes("Sync failed") ? (
-            <p className="muted text-xs" style={{ margin: 0 }}>Connect Zapier and assign input-context tools in Dashboard → Integrations, then try Sync from Zapier again.</p>
-          ) : error.includes("Prisma") || error.includes("prisma") || error.includes("restart") ? (
-            <p className="muted text-xs" style={{ margin: 0 }}>Run <code className="text-xs">npx prisma generate</code>, then stop and restart the dev server (<code className="text-xs">npm run dev</code>).</p>
-          ) : null}
+          <p className="text-sm text-danger">{error}</p>
         </div>
       )}
-      <div className="stack-sm" style={{ padding: "0.75rem" }}>
+      <div className="stack-sm collapsible-card__body">
         {loading ? (
           <p className="muted text-sm">Loading events…</p>
         ) : events.length === 0 ? (
           <p className="muted text-sm">
-            {autoScan
-              ? "No events yet. Auto scan will keep checking your connected apps (e.g. email). Ensure tools are in the input context zone in Integrations."
-              : "No events yet. Turn on Auto scan to automatically find emails and other sources, or click Sync from Zapier to pull once. Assign tools to the input context zone in Integrations."}
+            {autoScan ? "No events yet. Auto scan is on." : "No events. Turn on Auto scan or Sync from Zapier."}
           </p>
         ) : (
           events.map((ev) => (
             <div key={ev.id} className="trace-row">
               <div className="trace-meta">
-                <span className="font-semibold text-sm" style={{ color: "var(--accent-text)" }}>{ev.source}</span>
+                <span className="trace-title text-sm">{ev.source}</span>
                 <span className="muted text-xs">{ev.time}</span>
               </div>
-              <p className="text-sm" style={{ lineHeight: 1.5 }}>&ldquo;{ev.signal}&rdquo;</p>
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <p className="text-sm">&ldquo;{ev.signal}&rdquo;</p>
+              <div className="trace-actions">
                 <span className="badge">From {ev.toolName}</span>
                 <TriggerRiskButton
                   label="Assess Risk"

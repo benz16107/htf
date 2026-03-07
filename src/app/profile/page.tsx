@@ -14,13 +14,12 @@ export default async function ProfilePage() {
 
   return (
     <main className="container stack-xl">
-      <AppHeader title="Company Profile" subtitle="Review and update your setup information." />
+      <AppHeader title="Company profile" />
 
       <section className="card stack">
         <h3>Identity</h3>
         <div className="stack-sm">
           <div className="list-row"><span className="muted text-sm">Email</span><span className="text-sm">{session.email}</span></div>
-          <div className="list-row"><span className="muted text-sm">Company ID</span><span className="text-sm">{session.companyId || "—"}</span></div>
           <div className="list-row"><span className="muted text-sm">Role</span><span className="text-sm">Owner</span></div>
         </div>
       </section>

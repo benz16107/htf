@@ -115,6 +115,9 @@ export async function POST(request: Request) {
     },
   });
 
+  const wantsJson = request.headers.get("accept")?.includes("application/json");
+  if (wantsJson) return NextResponse.json({ success: true });
+
   const nextUrl = redirectTo === "dashboard" ? "/dashboard" : "/setup/review";
   return NextResponse.redirect(new URL(nextUrl, origin));
 }

@@ -2,6 +2,8 @@ import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { BackboardClient } from "../memory/backboard-client";
+import { fetchLiveContextFromZapier } from "../zapier/live-context";
+import { getZapierMCPToolSelections } from "../zapier/mcp-config";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "",
@@ -35,6 +37,10 @@ export type RiskCaseOutput = {
     hardCostIncreaseUsd: number;
     marginErosionPercent: number;
   };
+  /** Key stakeholders affected or who need to be informed (e.g. Procurement, Operations, Customer X). */
+  keyStakeholders?: string[];
+  /** Potential losses: revenue, margin, contracts, reputation, etc. */
+  potentialLosses?: string[];
   scenarios: Array<{
     name: string;
     recommendation: "recommended" | "fallback" | "alternate";
@@ -49,6 +55,24 @@ export type RunSignalRiskOptions = {
   /** When false, returns assessment only and does not create RiskCase/Scenarios. Default true. */
   createRiskCase?: boolean;
 };
+
+/** Normalize scenario metrics so UI can assume: costDelta = multiplier (1.15 = +15%), serviceImpact/riskReduction = 0–1. */
+function normalizeScenarioMetrics(s: { costDelta?: number; serviceImpact?: number; riskReduction?: number }) {
+  const out = { ...s };
+  const cd = Number(s.costDelta);
+  if (Number.isFinite(cd)) {
+    out.costDelta = cd > 2 ? 1 + Math.min(500, cd) / 100 : Math.max(0.01, Math.min(10, cd));
+  }
+  const si = Number(s.serviceImpact);
+  if (Number.isFinite(si)) {
+    out.serviceImpact = si > 1 ? Math.min(1, si / 100) : Math.max(0, Math.min(1, si));
+  }
+  const rr = Number(s.riskReduction);
+  if (Number.isFinite(rr)) {
+    out.riskReduction = rr > 1 ? Math.min(1, rr / 100) : Math.max(0, Math.min(1, rr));
+  }
+  return out;
+}
 
 export async function runSignalRiskAgent(
   companyId: string,
@@ -71,20 +95,54 @@ export async function runSignalRiskAgent(
 
   const baseProfile = company.baseProfile ?? undefined;
   const highLevelProfile = company.highLevelProfile ?? undefined;
-  if (!company.memoryThreads || company.memoryThreads.length === 0) {
-    console.error("No memoryThreads found for company", companyId);
-  }
-
-  // 2. Initialize Backboard Memory
+  // 2. Initialize Backboard Memory (create thread on first use if configured)
   const backboard = new BackboardClient(process.env.BACKBOARD_API_KEY || "");
-  let threadId = company.memoryThreads[0]?.backboardThreadId;
-  let assistantId = (company.memoryThreads[0] as any)?.backboardAssistantId;
+  let threadId = company.memoryThreads?.[0]?.backboardThreadId;
+  let assistantId = (company.memoryThreads?.[0] as { backboardAssistantId?: string } | undefined)?.backboardAssistantId;
+
+  if (backboard.isConfigured() && (!threadId || !company.memoryThreads?.length)) {
+    try {
+      const created = await backboard.createThread({
+        agentName: "SignalRisk",
+        companyId,
+        accessScope: "company_all",
+      });
+      await db.memoryThread.create({
+        data: {
+          companyId,
+          agentType: "SIGNAL_RISK",
+          accessScope: "COMPANY_ALL",
+          backboardAssistantId: created.assistantId,
+          backboardThreadId: created.threadId,
+        },
+      });
+      threadId = created.threadId;
+      assistantId = created.assistantId;
+    } catch (err) {
+      console.error("Failed to create Backboard memory thread for company", companyId, err);
+    }
+  }
 
   const entityMapStrings: Record<string, string> = {};
   for (const [k, v] of Object.entries(input.entityMap || {})) {
     entityMapStrings[k] = typeof v === "string" ? v : JSON.stringify(v ?? "");
   }
   const safeInput = { ...input, entityMap: entityMapStrings };
+
+  const [liveContextFromZapier, toolSelections] = await Promise.all([
+    fetchLiveContextFromZapier(companyId, 4000),
+    getZapierMCPToolSelections(companyId),
+  ]);
+  const mcpSourceList = (toolSelections?.inputContextTools ?? []).join(", ");
+  const liveContextBlock =
+    liveContextFromZapier.trim().length > 0
+      ? `
+        ## Live data from MCP-connected integrations
+        ${mcpSourceList ? `Available sources (each block below is labeled by source): ${mcpSourceList}.` : ""}
+        Reason about which integration(s) and which excerpts are relevant to this risk signal and your probability/impact/financial estimates. Use only the relevant parts; ignore the rest. In your reasoning, cite which source(s) you used when you rely on this data.
+        ${liveContextFromZapier}
+        `
+      : "";
 
       // 3. Construct the LLM Prompt
       const promptText = `
@@ -101,7 +159,7 @@ export async function runSignalRiskAgent(
         Lead Time Sensitivity: ${JSON.stringify(highLevelProfile?.leadTimeSensitivity ?? {})}
         Inventory Buffer Policies: ${JSON.stringify(highLevelProfile?.inventoryBufferPolicies ?? {})}
         Customer SLAs: ${JSON.stringify(highLevelProfile?.customerSlaProfile ?? {})}
-    
+        ${liveContextBlock}
         ## Incoming Risk Signal
         Type: ${safeInput.triggerType}
         Source/Entity Mapping: ${JSON.stringify(safeInput.entityMap)}
@@ -109,10 +167,12 @@ export async function runSignalRiskAgent(
         Initial Assumptions: ${(safeInput.assumptions || []).join(", ")}
     
         ## Task
-        Summarize the risk in one short phrase (e.g. "Supplier delay risk", "Port disruption – Asia routes") as "issueTitle". For each scenario, include "plannedTasks": an array of 3–6 items. Each item must have "task" (short description) and "executionType" (one of: "email", "notification", "summary", "insight", "recommendation", "zapier_mcp", "api", "webhook").
-        You MUST also provide exact, detailed reasoning for every number and result. In "reasoning", explain in plain language: (1) why you chose this probability and confidence, citing specific signals or evidence; (2) why you chose this severity and timeline, and which affected areas drive it; (3) how you derived revenue at risk and margin erosion (e.g. which assumptions, which revenue base, which cost drivers). Be specific—reference the input signals and company context. Then return your output strictly as JSON matching the following schema. Do not include any markdown formatting, code blocks, comments, or extra text. Only output the JSON object, nothing else.
+        Summarize the risk in one short phrase (e.g. "Supplier delay risk", "Port disruption – Asia routes") as "issueTitle". Identify "keyStakeholders": an array of 3–8 key parties affected or who need to be informed (e.g. "Procurement", "Operations", "Customer X", "Logistics"). Identify "potentialLosses": an array of 3–8 concrete potential losses (e.g. "Revenue at risk from delayed orders", "Contract penalties with key account", "Margin erosion on affected SKUs", "Reputation damage if OTIF drops"). For each scenario, include "plannedTasks": an array of 3–6 items. Each item must have "task" (short description) and "executionType" (one of: "email", "notification", "summary", "insight", "recommendation", "zapier_mcp", "api", "webhook").
+        You MUST also provide exact, detailed reasoning for every number and result. In "reasoning", explain in plain language: (1) why you chose this probability and confidence, citing specific signals or evidence—when you use live data from the MCP integrations above, say which source (e.g. Gmail, Google Sheets) you used; (2) why you chose this severity and timeline, and which affected areas drive it; (3) how you derived revenue at risk and margin erosion. Reason about which parts of the live data are relevant to this signal; use only those. Be specific—reference the input signals, company context, and any relevant MCP data. Then return your output strictly as JSON matching the following schema. Do not include any markdown formatting, code blocks, comments, or extra text. Only output the JSON object, nothing else.
         {
           "issueTitle": string,
+          "keyStakeholders": string[],
+          "potentialLosses": string[],
           "reasoning": {
             "probability": string,
             "impact": string,
@@ -212,21 +272,28 @@ export async function runSignalRiskAgent(
               hardCostIncreaseUsd: Number(raw.financialImpact?.hardCostIncreaseUsd || 0),
               marginErosionPercent: Number(raw.financialImpact?.marginErosionPercent || 0)
             };
-            // Scenarios
-            output.scenarios = Array.isArray(raw.scenarios) ? raw.scenarios.map((s: any) => ({
-              name: String(s.name || ''),
-              recommendation: String(s.recommendation || 'fallback'),
-              costDelta: Number(s.costDelta || 0),
-              serviceImpact: Number(s.serviceImpact || 0),
-              riskReduction: Number(s.riskReduction || 0),
-              plannedTasks: Array.isArray(s.plannedTasks) ? s.plannedTasks.map((t: any) =>
-                typeof t === 'object' && t != null && (t.task != null || t.task === '')
-                  ? { task: String(t.task ?? ''), executionType: String(t.executionType ?? 'other') }
-                  : { task: String(t ?? ''), executionType: 'other' }
-              ) : []
-            })) : [];
+            // Scenarios (normalize costDelta/serviceImpact/riskReduction so UI gets sensible percentages)
+            output.scenarios = Array.isArray(raw.scenarios) ? raw.scenarios.map((s: any) => {
+              const normalized = normalizeScenarioMetrics({
+                costDelta: Number(s.costDelta || 0),
+                serviceImpact: Number(s.serviceImpact || 0),
+                riskReduction: Number(s.riskReduction || 0),
+              });
+              return {
+                name: String(s.name || ''),
+                recommendation: String(s.recommendation || 'fallback'),
+                ...normalized,
+                plannedTasks: Array.isArray(s.plannedTasks) ? s.plannedTasks.map((t: any) =>
+                  typeof t === 'object' && t != null && (t.task != null || t.task === '')
+                    ? { task: String(t.task ?? ''), executionType: String(t.executionType ?? 'other') }
+                    : { task: String(t ?? ''), executionType: 'other' }
+                ) : []
+              };
+            }) : [];
             const rawTitle = String(raw.issueTitle || '').trim();
             if (rawTitle) output.issueTitle = rawTitle;
+            output.keyStakeholders = Array.isArray(raw.keyStakeholders) ? raw.keyStakeholders.map((x: any) => String(x ?? '')).filter(Boolean) : [];
+            output.potentialLosses = Array.isArray(raw.potentialLosses) ? raw.potentialLosses.map((x: any) => String(x ?? '')).filter(Boolean) : [];
           } catch (err3: any) {
             console.error("Failed to coerce Gemini response:", response.text);
             // Final fallback
@@ -244,6 +311,8 @@ export async function runSignalRiskAgent(
                 affectedAreas: []
               },
               financialImpact: {},
+              keyStakeholders: [],
+              potentialLosses: [],
               scenarios: [],
               warning: 'Gemini output could not be parsed. See logs for details.'
             };
@@ -252,6 +321,17 @@ export async function runSignalRiskAgent(
       }
       const parsedTitle = String(output?.issueTitle ?? '').trim();
       if (parsedTitle) output.issueTitle = parsedTitle;
+
+      if (!Array.isArray(output.keyStakeholders)) {
+        output.keyStakeholders = Array.isArray((output as any).keyStakeholders)
+          ? (output as any).keyStakeholders.map((x: any) => String(x ?? '')).filter(Boolean)
+          : [];
+      }
+      if (!Array.isArray(output.potentialLosses)) {
+        output.potentialLosses = Array.isArray((output as any).potentialLosses)
+          ? (output as any).potentialLosses.map((x: any) => String(x ?? '')).filter(Boolean)
+          : [];
+      }
 
       // Ensure reasoning object exists (first parse may have it)
       if (!output.reasoning || typeof output.reasoning !== "object") {
@@ -276,7 +356,7 @@ export async function runSignalRiskAgent(
         }
       }
 
-      // Normalize plannedTasks to { task, executionType }[]
+      // Normalize plannedTasks and scenario metrics (costDelta, serviceImpact, riskReduction)
       if (Array.isArray(output?.scenarios)) {
         output.scenarios = output.scenarios.map((s: any) => {
           const raw = Array.isArray(s.plannedTasks) ? s.plannedTasks : [];
@@ -285,7 +365,7 @@ export async function runSignalRiskAgent(
               ? { task: String(t.task ?? ""), executionType: String(t.executionType ?? "other") }
               : { task: String(t ?? ""), executionType: "other" }
           );
-          return { ...s, plannedTasks };
+          return { ...normalizeScenarioMetrics(s), plannedTasks };
         });
       }
 

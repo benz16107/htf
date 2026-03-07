@@ -84,15 +84,10 @@ export function SuggestedIntegrationsBox({ mcpTools, onApply, className }: Props
   return (
     <section className={`card suggested-integrations-box ${className ?? ""}`}>
       <div className="suggested-integrations-box__header">
-        <span className="suggested-integrations-box__icon" aria-hidden>
-          ✨
-        </span>
         <h4>Recommended to enable in Zapier</h4>
       </div>
       <p className="muted text-sm suggested-integrations-box__desc">
-        Based on your company profile, we recommend enabling these integrations in the Zapier
-        embed below. We can&apos;t connect them for you—each app (Gmail, Slack, etc.) requires you to sign in
-        in the embed. Once you&apos;ve connected apps below, use the button to pre-fill the zone checkboxes.
+        Suggested tools from your profile. Connect apps in the embed, then Apply to pre-fill zones.
       </p>
 
       {loading ? (

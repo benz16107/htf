@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -36,7 +37,7 @@ export async function POST(req: Request) {
         scenarioId: source.scenarioId,
         status: "DRAFTED",
         executionMode: source.executionMode,
-        actions: source.actions,
+        actions: source.actions == null ? Prisma.JsonNull : (source.actions as Prisma.InputJsonValue),
       },
     });
 

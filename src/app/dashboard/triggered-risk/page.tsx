@@ -9,10 +9,7 @@ export default async function TriggeredRiskPage() {
 
   return (
     <div className="stack-xl risk-page-container">
-      <AppHeader
-        title="Signals & Risk/Impact Analysis"
-        subtitle="Add external and internal signals to a risk assessment, run assessment, then send outputs to mitigation or run another."
-      />
+      <AppHeader title="Signals & risk" />
 
       <TriggeredRiskClient />
     </div>

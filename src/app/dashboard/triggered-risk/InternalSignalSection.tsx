@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ConfirmModal } from "@/components/ConfirmModal";
+import { groupToolsByApp } from "@/lib/integration-tool-hint";
 import type { SelectedSignal } from "./types";
 
 const AUTO_SCAN_STORAGE_KEY = "risk-auto-scan";
@@ -23,6 +25,11 @@ type EventItem = {
   time: string;
 };
 
+type EventDetails = {
+  rawContent: unknown;
+  externalId?: string | null;
+};
+
 function formatTime(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
@@ -35,6 +42,76 @@ function formatTime(iso: string): string {
   if (hours < 24) return `${hours} hour${hours !== 1 ? "s" : ""} ago`;
   if (days < 7) return `${days} day${days !== 1 ? "s" : ""} ago`;
   return d.toLocaleDateString();
+}
+
+function pickString(obj: unknown, keys: string[]): string | null {
+  if (!obj || typeof obj !== "object") return null;
+  const o = obj as Record<string, unknown>;
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+function pickObject(obj: unknown, key: string): Record<string, unknown> | null {
+  if (!obj || typeof obj !== "object") return null;
+  const v = (obj as Record<string, unknown>)[key];
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  return null;
+}
+
+function getEmailDetails(raw: unknown): { subject?: string; from?: string; to?: string; date?: string; snippet?: string; body?: string } {
+  if (!raw || typeof raw !== "object") return {};
+  const subject = pickString(raw, ["subject", "title"]);
+
+  const fromObj = pickObject(raw, "from") ?? pickObject(raw, "sender");
+  const from =
+    pickString(fromObj, ["email", "address", "name"]) ??
+    pickString(raw, ["from", "sender", "from_email", "fromEmail"]);
+
+  const toObj = pickObject(raw, "to");
+  const to =
+    pickString(toObj, ["email", "address", "name"]) ??
+    pickString(raw, ["to", "to_email", "toEmail", "recipient"]);
+
+  const date = pickString(raw, ["date", "internalDate", "sent_at", "sentAt", "received_at", "receivedAt"]);
+  const snippet = pickString(raw, ["snippet", "preview", "summary"]);
+  const body =
+    pickString(raw, [
+      "body",
+      "body_plain",
+      "bodyPlain",
+      "textBody",
+      "plainText",
+      "message",
+      "text",
+      "plain",
+      "content",
+      "html",
+    ]) ??
+    pickString(pickObject(raw, "payload"), [
+      "body",
+      "body_plain",
+      "bodyPlain",
+      "textBody",
+      "plainText",
+      "message",
+      "text",
+      "plain",
+      "content",
+      "html",
+    ]);
+
+  return { subject: subject ?? undefined, from: from ?? undefined, to: to ?? undefined, date: date ?? undefined, snippet: snippet ?? undefined, body: body ?? undefined };
+}
+
+function safePrettyJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function getStoredAutoScan(): boolean {
@@ -89,36 +166,58 @@ function setStoredInternalConfig(config: InternalConfig) {
 
 function InternalSignalRow({
   ev,
-  onDelete,
+  onRequestDelete,
   onAddToAssessment,
 }: {
   ev: EventItem;
-  onDelete: () => void;
+  onRequestDelete?: (id: string) => void;
   onAddToAssessment?: (item: SelectedSignal) => void;
 }) {
-  const [deleting, setDeleting] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [details, setDetails] = useState<EventDetails | null>(null);
 
-  const handleDelete = async () => {
-    if (deleting) return;
-    setDeleting(true);
+  const loadDetails = async () => {
+    if (detailsLoading || details) return;
+    setDetailsLoading(true);
+    setDetailsError(null);
     try {
-      const res = await fetch(`/api/risk/events/${ev.id}`, { method: "DELETE" });
-      if (res.ok) onDelete();
+      const res = await fetch(`/api/risk/events/${ev.id}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDetailsError(data.error || "Failed to load details");
+        return;
+      }
+      setDetails({ rawContent: data?.event?.rawContent, externalId: data?.event?.externalId });
+    } catch {
+      setDetailsError("Failed to load details");
     } finally {
-      setDeleting(false);
+      setDetailsLoading(false);
     }
   };
 
   return (
     <div className="trace-row">
       <div className="trace-meta">
-        <span className="font-semibold text-sm" style={{ color: "var(--accent-text)" }}>{ev.source}</span>
+        <span className="trace-title text-sm">{ev.source}</span>
         <span className="muted text-xs">{ev.time}</span>
       </div>
-      <p className="text-sm" style={{ lineHeight: 1.5 }}>&ldquo;{ev.signal}&rdquo;</p>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+      <p className="text-sm">&ldquo;{ev.signal}&rdquo;</p>
+      <div className="trace-actions">
         <span className="badge">From {ev.toolName}</span>
-        <div className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+        <div className="row gap-xs">
+          <button
+            type="button"
+            className="btn secondary btn-sm"
+            onClick={async () => {
+              const next = !detailsOpen;
+              setDetailsOpen(next);
+              if (next) await loadDetails();
+            }}
+          >
+            {detailsOpen ? "Hide details" : "Show details"}
+          </button>
           {onAddToAssessment && (
             <button
               type="button"
@@ -135,18 +234,72 @@ function InternalSignalRow({
               Add to risk assessment
             </button>
           )}
-          <button
-            type="button"
-            className="btn secondary btn-sm"
-            onClick={handleDelete}
-            disabled={deleting}
-            title="Remove this signal"
-            aria-label="Remove signal"
-          >
-            {deleting ? "…" : "Remove"}
-          </button>
+          {onRequestDelete && (
+            <button
+              type="button"
+              className="btn secondary btn-sm"
+              onClick={() => onRequestDelete(ev.id)}
+              title="Remove this signal"
+              aria-label="Remove signal"
+            >
+              Remove
+            </button>
+          )}
         </div>
       </div>
+
+      {detailsOpen && (
+        <div className="card-flat stack-xs mt-xs" style={{ padding: "0.6rem 0.75rem" }}>
+          {detailsLoading ? (
+            <p className="muted text-sm" style={{ margin: 0 }}>Loading details…</p>
+          ) : detailsError ? (
+            <p className="text-sm" style={{ color: "var(--danger)", margin: 0 }}>{detailsError}</p>
+          ) : (
+            (() => {
+              const raw = details?.rawContent;
+              const email = getEmailDetails(raw);
+              const hasEmailFields = Boolean(email.subject || email.from || email.to || email.date || email.snippet || email.body);
+              return (
+                <div className="stack-xs">
+                  {details?.externalId && (
+                    <p className="muted text-xs" style={{ margin: 0 }}>External id: {details.externalId}</p>
+                  )}
+
+                  {hasEmailFields && (
+                    <div className="stack-xs">
+                      {email.subject && <p className="text-sm" style={{ margin: 0 }}><strong>Subject:</strong> {email.subject}</p>}
+                      {email.from && <p className="text-sm" style={{ margin: 0 }}><strong>From:</strong> {email.from}</p>}
+                      {email.to && <p className="text-sm" style={{ margin: 0 }}><strong>To:</strong> {email.to}</p>}
+                      {email.date && <p className="text-sm" style={{ margin: 0 }}><strong>Date:</strong> {email.date}</p>}
+                      {email.snippet && <p className="text-sm" style={{ margin: 0 }}><strong>Snippet:</strong> {email.snippet}</p>}
+                      {email.body && (
+                        <div className="stack-xs">
+                          <p className="text-sm" style={{ margin: 0 }}><strong>Body:</strong></p>
+                          <pre className="code-block soft scroll-240">
+                            {email.body}
+                          </pre>
+                        </div>
+                      )}
+                      {!email.body && (
+                        <p className="muted text-xs" style={{ margin: "0.25rem 0 0 0" }}>
+                          Message content isn’t available for this item (some email tools only return a snippet). Run “Sync from Zapier” again after the updated Gmail retrieval to store full bodies for new events.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  <details className="inline-details">
+                    <summary className="muted text-xs">Raw payload</summary>
+                    <pre className="code-block soft scroll-260" style={{ marginTop: "0.35rem" }}>
+                      {safePrettyJson(raw)}
+                    </pre>
+                  </details>
+                </div>
+              );
+            })()
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -168,6 +321,8 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
   const [intervalMinutes, setIntervalMinutes] = useState(5);
   const [clearingAll, setClearingAll] = useState(false);
   const [lastSyncTools, setLastSyncTools] = useState<{ name: string; status: string; count: number }[] | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<null | { type: "one"; id: string } | { type: "all" }>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const mounted = useRef(true);
 
   const fetchToolSelections = useCallback(async () => {
@@ -239,6 +394,29 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
     fetchEvents();
   }, [fetchEvents]);
 
+  const onConfirmDeleteConfirm = useCallback(async () => {
+    if (!confirmDelete) return;
+    if (confirmDelete.type === "one") {
+      setDeletingId(confirmDelete.id);
+      try {
+        const res = await fetch(`/api/risk/events/${confirmDelete.id}`, { method: "DELETE" });
+        if (res.ok) await fetchEvents();
+      } finally {
+        if (mounted.current) setDeletingId(null);
+        setConfirmDelete(null);
+      }
+    } else {
+      setClearingAll(true);
+      try {
+        const res = await fetch("/api/risk/events", { method: "DELETE" });
+        if (res.ok) await fetchEvents();
+      } finally {
+        if (mounted.current) setClearingAll(false);
+        setConfirmDelete(null);
+      }
+    }
+  }, [confirmDelete, fetchEvents]);
+
   const runIngest = useCallback(async () => {
     if (!mounted.current) return;
     setSyncing(true);
@@ -303,29 +481,41 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
     } catch {}
   };
 
+  const confirmDeleteOpen = confirmDelete !== null;
+  const confirmDeleteTitle = confirmDelete?.type === "one" ? "Remove signal" : confirmDelete?.type === "all" ? "Remove all signals" : "";
+  const confirmDeleteMessage =
+    confirmDelete?.type === "one"
+      ? "Remove this internal signal from the list?"
+      : confirmDelete?.type === "all"
+        ? "Clear all ingested internal signals for this company? This cannot be undone."
+        : "";
+  const confirmDeleteLoading = (confirmDelete?.type === "one" && deletingId === confirmDelete.id) || (confirmDelete?.type === "all" && clearingAll);
+
   return (
-    <section className="card stack" style={{ padding: 0 }}>
+    <section className="card stack collapsible-card">
+      <ConfirmModal
+        open={confirmDeleteOpen}
+        title={confirmDeleteTitle}
+        message={confirmDeleteMessage}
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        variant="danger"
+        loading={confirmDeleteLoading}
+        onConfirm={onConfirmDeleteConfirm}
+        onCancel={() => setConfirmDelete(null)}
+      />
       <div
-        className="row"
-        style={{
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "1.25rem 1.25rem 0.75rem",
-          borderBottom: "1px solid var(--border)",
-          cursor: "pointer",
-          gap: "0.5rem",
-          flexWrap: "wrap",
-        }}
+        className="collapsible-card__header"
         onClick={() => setListExpanded((e) => !e)}
         role="button"
         tabIndex={0}
         onKeyDown={(ev) => ev.key === "Enter" && setListExpanded((e) => !e)}
         aria-expanded={listExpanded}
       >
-        <div className="row" style={{ alignItems: "center", gap: "0.5rem", minWidth: 0 }}>
+        <div className="collapsible-card__title">
           <span
-            className="muted"
-            style={{ fontSize: "0.875rem", transform: listExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}
+            className="collapsible-card__chevron"
+            aria-expanded={listExpanded}
             aria-hidden
           >
             &gt;
@@ -335,14 +525,14 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
             <span className="badge" style={{ flexShrink: 0 }}>{filteredEvents.length}</span>
           )}
         </div>
-        <div className="row" style={{ gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }} onClick={(ev) => ev.stopPropagation()}>
+        <div className="collapsible-card__header-actions" onClick={(ev) => ev.stopPropagation()}>
           <button
             type="button"
             className="btn secondary btn-sm"
             onClick={() => { setConfigOpen((o) => !o); setListExpanded(true); }}
             aria-expanded={configOpen}
           >
-            Configure integrations
+            Configure
           </button>
           <label className="row" style={{ alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.875rem" }}>
             <input
@@ -364,9 +554,8 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
       </div>
 
       {configOpen && (
-        <div className="card-flat stack-sm" style={{ margin: "0 1.25rem 0.75rem", padding: "0.75rem", borderBottom: "1px solid var(--border)" }}>
+        <div className="card-flat stack-sm" style={{ margin: "0 1.25rem 0.5rem", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--border)" }}>
           <p className="text-sm font-medium" style={{ margin: 0 }}>Auto scan interval</p>
-          <p className="text-sm muted" style={{ margin: "0.25rem 0 0 0" }}>How often to sync from Zapier when Auto scan is on.</p>
           <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.35rem" }}>
             {INTERVAL_OPTIONS.map((opt) => (
               <button
@@ -383,53 +572,82 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
             ))}
           </div>
           <p className="text-sm font-medium" style={{ margin: "0.75rem 0 0 0" }}>Integrations to show</p>
-          <p className="text-sm muted" style={{ margin: "0.25rem 0 0 0" }}>Choose which integrations to display in the list below. Uncheck to hide that source.</p>
-          <p className="text-xs muted" style={{ margin: "0.25rem 0 0 0" }}>
-            For recent emails: add <strong>Gmail: Find Email</strong> or <strong>Gmail: Search Emails</strong> to input context. Avoid &ldquo;Get Attachment by Filename&rdquo;—it only retrieves one attachment by name and cannot list emails.
-          </p>
           {integrations.length === 0 ? (
-            <p className="muted text-xs" style={{ margin: "0.5rem 0 0" }}>No input-context tools saved yet. Go to Dashboard → Integrations, connect Zapier, and add tools (e.g. Gmail: Find Email) to the input context zone, then Save.</p>
+            <p className="muted text-xs" style={{ margin: "0.25rem 0 0 0" }}>Add tools in Dashboard → Integrations (input context), then Save.</p>
           ) : (
-            <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-              {integrations.map((name) => (
-                <label
-                  key={name}
-                  className="row"
-                  style={{ alignItems: "center", gap: "0.35rem", cursor: "pointer", fontSize: "0.8125rem", margin: 0 }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <input
-                    type="checkbox"
-                    checked={!displaySet || displaySet.has(name)}
-                    onChange={() => toggleIntegration(name)}
-                  />
-                  <span>{name}</span>
-                </label>
-              ))}
-              {displaySet && displaySet.size < integrations.length && (
-                <button type="button" className="btn secondary btn-sm" onClick={showAll}>
-                  Show all
-                </button>
-              )}
+            <div className="integrations-zone__list" style={{ maxHeight: 220 }}>
+              {groupToolsByApp(integrations.map((name) => ({ name }))).map(({ appKey, appLabel, tools: appTools }) => {
+                const names = new Set(appTools.map((t) => t.name));
+                const selectedInGroup = displaySet ? appTools.filter((t) => displaySet.has(t.name)).length : appTools.length;
+                return (
+                  <details key={appKey} className="integrations-zone__group">
+                    <summary className="integrations-zone__group-summary" onClick={(e) => e.stopPropagation()}>
+                      <span className="integrations-zone__group-title">{appLabel}</span>
+                      <span className="integrations-zone__group-meta">
+                        {displaySet ? `${selectedInGroup}/${appTools.length}` : `${appTools.length}/${appTools.length}`}
+                      </span>
+                      <span className="integrations-zone__group-actions">
+                        <button
+                          type="button"
+                          className="btn secondary btn-xs"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const base = selectedIntegrations ?? integrations;
+                            const next = Array.from(new Set([...base, ...names]));
+                            setSelectedIntegrations(next);
+                            setStoredIntegrationFilter(next);
+                          }}
+                        >
+                          Select all
+                        </button>
+                        <button
+                          type="button"
+                          className="btn secondary btn-xs"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const base = selectedIntegrations ?? integrations;
+                            const next = base.filter((n) => !names.has(n));
+                            setSelectedIntegrations(next.length === 0 ? null : next);
+                            setStoredIntegrationFilter(next.length === 0 ? [] : next);
+                          }}
+                        >
+                          Clear
+                        </button>
+                      </span>
+                    </summary>
+                    {appTools.map((tool) => (
+                      <label
+                        key={tool.name}
+                        className="integrations-zone__item"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!displaySet || displaySet.has(tool.name)}
+                          onChange={() => toggleIntegration(tool.name)}
+                        />
+                        <span className="integrations-zone__item-text">{tool.name}</span>
+                      </label>
+                    ))}
+                  </details>
+                );
+              })}
             </div>
           )}
+          {displaySet && displaySet.size < integrations.length && (
+            <button type="button" className="btn secondary btn-sm" style={{ marginTop: "0.5rem" }} onClick={showAll}>
+              Show all
+            </button>
+          )}
           <p className="text-sm font-medium" style={{ margin: "0.75rem 0 0 0" }}>Remove all</p>
-          <p className="text-sm muted" style={{ margin: "0.25rem 0 0 0" }}>Clear all ingested internal signals for this company.</p>
           <button
             type="button"
             className="btn secondary btn-sm"
             style={{ marginTop: "0.35rem" }}
             disabled={clearingAll || events.length === 0}
-            onClick={async () => {
-              if (clearingAll || events.length === 0) return;
-              setClearingAll(true);
-              try {
-                const res = await fetch("/api/risk/events", { method: "DELETE" });
-                if (res.ok) await fetchEvents();
-              } finally {
-                if (mounted.current) setClearingAll(false);
-              }
-            }}
+            onClick={() => events.length > 0 && setConfirmDelete({ type: "all" })}
           >
             {clearingAll ? "Removing…" : "Remove all signals"}
           </button>
@@ -441,19 +659,16 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
       {error && (
         <div className="card-flat stack-xs" style={{ margin: "0.75rem", padding: "0.5rem 0.75rem", borderColor: "var(--danger)" }}>
           <p className="text-sm" style={{ color: "var(--danger)", margin: 0 }}>{error}</p>
-          <p className="muted text-xs" style={{ margin: 0 }}>Connect Zapier and assign input-context tools in Dashboard → Integrations.</p>
         </div>
       )}
 
-      <div className="stack-sm" style={{ padding: "0.75rem 1.25rem 1.25rem", maxHeight: "40vh", overflowY: "auto" }}>
+      <div className="stack-sm collapsible-card__body scroll-40vh">
         {loading ? (
           <p className="muted text-sm">Loading…</p>
         ) : filteredEvents.length === 0 ? (
           <div className="stack-xs">
             <p className="muted text-sm">
-              {events.length === 0
-                ? "No events yet. Turn on Auto scan or Sync from Zapier. For email, use Gmail: Find Email or Gmail: Search Emails in input context (not Get Attachment by Filename)."
-                : "No events match the selected integrations. Change filters above or show all."}
+              {events.length === 0 ? "No events. Turn on Auto scan or Sync from Zapier." : "No events match filters. Show all or change selection."}
             </p>
             {lastSyncTools && lastSyncTools.length > 0 && (
               <p className="text-xs muted" style={{ marginTop: "0.25rem" }}>
@@ -487,7 +702,7 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
             <InternalSignalRow
               key={ev.id}
               ev={ev}
-              onDelete={fetchEvents}
+              onRequestDelete={(id) => setConfirmDelete({ type: "one", id })}
               onAddToAssessment={onAddToAssessment}
             />
             ))}
