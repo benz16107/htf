@@ -7,8 +7,8 @@ const DEFAULTS = {
   automationLevel: "off",
   signalSources: "both",
   internalSignalMode: "lookback" as const,
-  internalSignalLookbackMinutes: 10,
-  externalSignalLookbackMinutes: 10,
+  internalSignalLookbackMinutes: 60,
+  externalSignalLookbackMinutes: 60,
   minSeverityToAct: "MODERATE",
   minProbabilityToAct: 0,
   minRevenueAtRiskToAct: null as number | null,
@@ -62,6 +62,7 @@ export async function GET() {
       config: {
         id: config.id,
         companyId: config.companyId,
+        agentRunning: config.agentRunning ?? false,
         automationLevel: config.automationLevel,
         signalSources: config.signalSources,
         internalSignalMode: (config as { internalSignalMode?: string }).internalSignalMode ?? DEFAULTS.internalSignalMode,
@@ -185,10 +186,15 @@ export async function PATCH(req: Request) {
         ? body.requireApprovalForFirstNPerDay
         : undefined;
 
+    // When turning the agent "on" (agentRunning: true) without setting automationLevel, enable full_auto
+    // so the run route actually processes signals (it returns early when automationLevel === "off").
+    const effectiveAutomationLevel =
+      automationLevel ?? (agentRunning === true ? "full_auto" : DEFAULTS.automationLevel);
+
     const data: Parameters<typeof db.autonomousAgentConfig.upsert>[0]["create"] = {
       companyId: session.companyId,
       agentRunning: agentRunning ?? DEFAULTS.agentRunning,
-      automationLevel: automationLevel ?? DEFAULTS.automationLevel,
+      automationLevel: effectiveAutomationLevel,
       signalSources: signalSources ?? DEFAULTS.signalSources,
       internalSignalMode: internalSignalMode ?? DEFAULTS.internalSignalMode,
       internalSignalLookbackMinutes: internalSignalLookbackMinutes ?? DEFAULTS.internalSignalLookbackMinutes,
@@ -214,6 +220,7 @@ export async function PATCH(req: Request) {
       update: {
         ...(agentRunning !== undefined && { agentRunning }),
         ...(automationLevel !== undefined && { automationLevel }),
+        ...(agentRunning === true && automationLevel === undefined && { automationLevel: "full_auto" }),
         ...(signalSources !== undefined && { signalSources }),
         ...(internalSignalMode !== undefined && { internalSignalMode }),
         ...(internalSignalLookbackMinutes !== undefined && { internalSignalLookbackMinutes }),

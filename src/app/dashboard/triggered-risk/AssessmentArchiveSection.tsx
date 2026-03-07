@@ -86,8 +86,8 @@ export function AssessmentArchiveSection({ archived, onReaddToActive, onClearArc
                         style={{
                           padding: "0.15rem 0.5rem",
                           borderRadius: 4,
-                          background: "var(--muted)",
-                          color: "var(--text)",
+                          background: "var(--warning-soft)",
+                          color: "var(--warning)",
                         }}
                         title="Created by autonomous agent"
                       >

@@ -95,15 +95,34 @@ export async function runReflectionAgent(
     if (!response.text) throw new Error("No response from generating reflection");
     const output: PlaybookEntryOutput = JSON.parse(response.text);
 
+    // Ensure required Json fields are never undefined (Prisma rejects missing/undefined)
+    const predictedOutcome =
+        output.predictedOutcome && typeof output.predictedOutcome === "object"
+            ? output.predictedOutcome
+            : {
+                  cost: typeof chosenScenario?.costDelta === "number" ? chosenScenario.costDelta : 0,
+                  service: typeof chosenScenario?.serviceImpact === "number" ? chosenScenario.serviceImpact : 0,
+              };
+    const actualOutcome =
+        output.actualOutcome && typeof output.actualOutcome === "object"
+            ? output.actualOutcome
+            : { cost: null, service: null, notes: "" };
+    const effectiveness =
+        output.effectiveness && typeof output.effectiveness === "object"
+            ? output.effectiveness
+            : { score: 0, verdict: "partial" as const };
+    const learnings = Array.isArray(output.learnings) ? output.learnings : [];
+    const incidentClass = typeof output.incidentClass === "string" && output.incidentClass.trim() ? output.incidentClass : "unknown";
+
     // 3. Save to Prisma Playbook
     const playbookEntry = await db.playbookEntry.create({
         data: {
             companyId,
-            incidentClass: output.incidentClass,
-            predictedOutcome: output.predictedOutcome as any,
-            actualOutcome: output.actualOutcome as any,
-            effectiveness: output.effectiveness as any,
-            learnings: output.learnings as any,
+            incidentClass,
+            predictedOutcome,
+            actualOutcome,
+            effectiveness,
+            learnings,
         }
     });
 
@@ -115,11 +134,17 @@ export async function runReflectionAgent(
         await backboard.appendReasoning(threadId, {
             action: "Reflection & Playbook Update Generated",
             incident: plan.riskCase.triggerType,
-            effectivenessVerdict: output.effectiveness.verdict,
-            learnings: output.learnings,
+            effectivenessVerdict: effectiveness.verdict,
+            learnings,
             systemNote: "These learnings have been permanently embedded in the active playbook."
         });
     }
 
-    return output;
+    return {
+        incidentClass,
+        predictedOutcome,
+        actualOutcome,
+        effectiveness,
+        learnings,
+    };
 }

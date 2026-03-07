@@ -1,3 +1,6 @@
+/** localStorage key for an assessment that completed after the user left the page */
+export const PENDING_OUTPUT_KEY = "htf-risk-pending-output";
+
 export type SelectedSignal = {
   id: string;
   type: "internal" | "external" | "manual";

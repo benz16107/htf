@@ -217,7 +217,7 @@ export async function DELETE(request: Request) {
   } catch (err) {
     console.error("DELETE /api/agents/autonomous/logs error:", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to delete run" },
+      { error: err instanceof Error ? err.message : "Failed to delete all" },
       { status: 500 }
     );
   }

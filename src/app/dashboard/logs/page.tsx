@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { AgentTracesClient } from "./AgentTracesClient";
+import { AgentRunningVisualWrapper } from "./AgentRunningVisualWrapper";
 import { LogsPageHeaderActions } from "./LogsPageHeaderActions";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,9 @@ export default async function AgentTracesPage() {
           </Suspense>
         }
       />
-      <AgentTracesClient />
+      <AgentRunningVisualWrapper>
+        <AgentTracesClient />
+      </AgentRunningVisualWrapper>
     </div>
   );
 }

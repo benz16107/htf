@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession, hasCompletedSetup } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
+import { AgentHeartbeat } from "@/components/AgentHeartbeat";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
@@ -15,6 +16,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="dashboard-shell">
+      <AgentHeartbeat />
       <aside className="sidebar">
         <DashboardSidebar email={session.email} companyName={companyName} />
       </aside>

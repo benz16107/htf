@@ -168,6 +168,60 @@ body::-webkit-scrollbar-corner {
   to { transform: scaleX(1); }
 }
 
+/* Autonomous agent: "on" state and turn-on screen animation */
+@keyframes agent-turn-on-sweep {
+  0% {
+    opacity: 0;
+    transform: scaleX(0);
+    transform-origin: left center;
+  }
+  40% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    transform: scaleX(1);
+    transform-origin: left center;
+  }
+}
+@keyframes agent-pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(13, 148, 136, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(13, 148, 136, 0);
+  }
+}
+.agent-running-wrapper {
+  position: relative;
+  border-radius: var(--radius-lg);
+  transition: box-shadow 0.4s ease, border-color 0.3s ease;
+}
+.agent-running-wrapper.agent-on {
+  border-left: 3px solid var(--accent);
+  box-shadow: 0 0 0 1px rgba(13, 148, 136, 0.08);
+  background: linear-gradient(90deg, var(--accent-soft) 0%, transparent 140px);
+  background-attachment: local;
+  padding-left: var(--space-4);
+}
+.agent-running-wrapper.agent-turn-on-animation::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-soft) 0%, transparent 50%);
+  pointer-events: none;
+  animation: agent-turn-on-sweep 1.4s var(--ease-out-expo) forwards;
+  z-index: 0;
+}
+.agent-running-wrapper.agent-turn-on-animation > * {
+  position: relative;
+  z-index: 1;
+}
+.agent-toggle--on {
+  animation: agent-pulse-glow 2s ease-in-out infinite;
+}
+
 /* Landing page animated background */
 @keyframes landing-bg-shift {
   0% { opacity: 1; transform: scale(1) translate(0, 0); }
@@ -448,6 +502,22 @@ input[type="radio"]:disabled {
   font-family: var(--font-body);
   transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
 }
+.field select {
+  line-height: 1.4;
+  min-height: 2.75rem;
+  padding-right: 2rem;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M3 4.5 L6 7.5 L9 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 0.75rem;
+}
+.field select option {
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-soft);
+  color: var(--foreground);
+}
 .field input:focus,
 .field textarea:focus,
 .field select:focus {
@@ -469,6 +539,22 @@ textarea.input {
   font-size: 0.875rem;
   font-family: var(--font-body);
   transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+select.input {
+  line-height: 1.4;
+  min-height: 2.75rem;
+  padding-right: 2rem;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M3 4.5 L6 7.5 L9 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 0.75rem;
+}
+select.input option {
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-soft);
+  color: var(--foreground);
 }
 input.input:focus,
 select.input:focus,

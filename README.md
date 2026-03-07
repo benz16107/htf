@@ -69,6 +69,7 @@ Visit http://localhost:3000.
    - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (if using Supabase auth)
    - `GEMINI_API_KEY`, `BACKBOARD_API_KEY` (if used)
    - `NEXT_PUBLIC_ZAPIER_MCP_EMBED_ID`, `ZAPIER_MCP_EMBED_SECRET` (for Zapier MCP embed)
+   - `CRON_SECRET` – required for the autonomous agent to keep running in the background when no one is on the page. Vercel Cron hits `/api/cron/autonomous` every 2 minutes and sends this as a Bearer token; set it in Vercel env and the cron will run for all companies with the agent turned on.
 
 5. **Zapier MCP embed**  
    In [mcp.zapier.com → Embed config → Allowed domains](https://mcp.zapier.com/manage/embed/config), add your Vercel hostname (e.g. `your-app.vercel.app`) so the embed can load in production.

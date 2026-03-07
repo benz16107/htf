@@ -5,6 +5,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { MitigationCard } from "@/components/MitigationCard";
 
+export const dynamic = "force-dynamic";
+
 export default async function MitigationPlansPage() {
   const session = await getSession();
   if (!session?.companyId) redirect("/sign-in");

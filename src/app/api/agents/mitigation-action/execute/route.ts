@@ -373,10 +373,12 @@ export async function POST(req: Request) {
             plan: await db.mitigationPlan.findUnique({ where: { id: planId } }),
             executionResults,
         });
-    } catch (error: any) {
-        console.error("Execution error:", error);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        const code = error instanceof Error && "code" in error ? String((error as { code?: string }).code) : "";
+        console.error("Execution error:", message, code || "", error);
         return NextResponse.json(
-            { error: error.message || "Failed to execute plan" },
+            { error: message || "Failed to execute plan" },
             { status: 500 }
         );
     }

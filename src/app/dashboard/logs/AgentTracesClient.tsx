@@ -123,6 +123,25 @@ export function AgentTracesClient() {
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set());
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [confirmDeleteRunId, setConfirmDeleteRunId] = useState<string | null>(null);
+  const [deletingCaseId, setDeletingCaseId] = useState<string | null>(null);
+  const [confirmDeleteCaseId, setConfirmDeleteCaseId] = useState<string | null>(null);
+
+  const deleteCase = async (riskCaseId: string) => {
+    if (deletingCaseId) return;
+    setDeletingCaseId(riskCaseId);
+    try {
+      const res = await fetch(`/api/risk/cases/${riskCaseId}`, { method: "DELETE" });
+      if (res.ok) {
+        setConfirmDeleteCaseId(null);
+        await fetchLogs();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Failed to delete case");
+      }
+    } finally {
+      setDeletingCaseId(null);
+    }
+  };
 
   const deleteRun = async (runId: string) => {
     if (deletingRunId) return;
@@ -185,14 +204,25 @@ export function AgentTracesClient() {
     <>
       <ConfirmModal
         open={confirmDeleteRunId !== null}
-        title="Delete run"
+        title="Delete all"
         message="Clear this run from history? This cannot be undone."
-        confirmLabel="Delete run"
+        confirmLabel="Delete all"
         cancelLabel="Cancel"
         variant="danger"
         loading={deletingRunId === confirmDeleteRunId}
         onConfirm={() => confirmDeleteRunId && deleteRun(confirmDeleteRunId)}
         onCancel={() => setConfirmDeleteRunId(null)}
+      />
+      <ConfirmModal
+        open={confirmDeleteCaseId !== null}
+        title="Delete case"
+        message="Delete this risk case and its scenarios and plans? This cannot be undone."
+        confirmLabel="Delete case"
+        cancelLabel="Cancel"
+        variant="danger"
+        loading={deletingCaseId === confirmDeleteCaseId}
+        onConfirm={() => confirmDeleteCaseId && deleteCase(confirmDeleteCaseId)}
+        onCancel={() => setConfirmDeleteCaseId(null)}
       />
       {error && (
         <div className="card-flat" style={{ padding: "0.6rem 1rem", background: "var(--danger-soft)", color: "var(--danger)" }}>
@@ -240,6 +270,9 @@ export function AgentTracesClient() {
             const runsToShow = latestRun ? [latestRun] : [];
             return runsToShow.map(({ runId, entries }) => {
             const { runLevel, caseGroups } = groupEntriesByCase(entries);
+            const caseGroupsWithCase = [...caseGroups.entries()].filter(([, caseEntries]) =>
+              caseEntries.some((e) => e.riskCase)
+            );
             const runLevelFiltered = runLevel.filter(
               (log) => log.actionType !== "run_started" && log.actionType !== "run_completed"
             );
@@ -248,7 +281,7 @@ export function AgentTracesClient() {
                 <div className="collapsible-card__header" style={{ cursor: "default" }}>
                   <div className="collapsible-card__title">
                     <h3 style={{ margin: 0 }}>Run</h3>
-                    <span className="badge accent">{caseGroups.size} risk case(s)</span>
+                    <span className="badge accent">{caseGroupsWithCase.length} risk case(s)</span>
                   </div>
                   <div className="collapsible-card__header-actions">
                     <button
@@ -258,7 +291,7 @@ export function AgentTracesClient() {
                       disabled={deletingRunId === runId}
                       title="Clear this run from history"
                     >
-                      {deletingRunId === runId ? "…" : "Delete run"}
+                      {deletingRunId === runId ? "…" : "Delete all"}
                     </button>
                   </div>
                 </div>
@@ -276,13 +309,18 @@ export function AgentTracesClient() {
                             {log.actionType === "signal_skipped" && (log.details as { reason?: string })?.reason && (
                               <span className="text-xs muted">{(log.details as { reason: string }).reason}</span>
                             )}
+                            {log.actionType === "run_started" && (log.details as { hint?: string })?.hint && (
+                              <span className="text-xs muted" style={{ display: "block", marginTop: "0.25rem" }}>
+                                {(log.details as { hint: string }).hint}
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
 
-                  {[...caseGroups.entries()].map(([riskCaseId, caseEntries]) => {
+                  {caseGroupsWithCase.map(([riskCaseId, caseEntries]) => {
                     const created = caseEntries.find((e) => e.actionType === "risk_case_created");
                     const signal =
                       created?.signal ??
@@ -307,9 +345,23 @@ export function AgentTracesClient() {
                     const plans = caseEntries
                       .filter((e) => e.plan)
                       .map((e) => e.plan!);
+                    const executedPlans = plans.filter((p) => p.status === "EXECUTED");
+                    const executedActions = executedPlans.flatMap((p) => (Array.isArray(p.actions) ? (p.actions as { stepTitle?: string; type?: string }[]) : []));
+                    const executionBullets = executedActions
+                      .map((a) => a.stepTitle?.trim() || a.type || "Step")
+                      .filter(Boolean);
                     const planIds = caseEntries.filter((e) => e.planId).map((e) => e.planId!);
                     const latestPlanId = planIds[planIds.length - 1];
                     const isOpen = expandedCases.has(riskCaseId);
+
+                    const riskOneLiner = riskCase
+                      ? [
+                          riskCase.severity && `Severity: ${riskCase.severity}`,
+                          (riskCase.probabilityPoint != null || (riskCase.probabilityBandLow != null && riskCase.probabilityBandHigh != null))
+                            ? `Probability: ${riskCase.probabilityPoint != null ? `${toPercent(riskCase.probabilityPoint).toFixed(0)}%` : `${toPercent(riskCase.probabilityBandLow!).toFixed(0)}–${toPercent(riskCase.probabilityBandHigh!).toFixed(0)}%`}`
+                            : null,
+                        ].filter(Boolean).join(" · ")
+                      : null;
 
                     return (
                       <div key={riskCaseId} className="card-flat stack-sm" style={{ padding: 0, overflow: "hidden" }}>
@@ -323,20 +375,42 @@ export function AgentTracesClient() {
                             background: "var(--card-bg)",
                             cursor: "pointer",
                             textAlign: "left",
-                            alignItems: "center",
+                            alignItems: "flex-start",
                             flexWrap: "wrap",
                           }}
                           onClick={() => toggleCase(riskCaseId)}
                           aria-expanded={isOpen}
                         >
-                          <div className="row gap-2xs" style={{ minWidth: 0, flex: 1 }}>
-                            <span className="text-sm font-medium truncate" title={caseName}>{caseName}</span>
-                            {riskCase?.createdByAutonomousAgent && (
-                              <span className="badge" style={{ background: "var(--muted)", color: "var(--text)" }}>Autonomous</span>
+                          <div className="stack-2xs" style={{ minWidth: 0, flex: 1 }}>
+                            <div className="row gap-2xs" style={{ flexWrap: "wrap", alignItems: "center" }}>
+                              <span className="text-sm font-medium truncate" title={caseName}>{caseName}</span>
+                              {riskCase?.createdByAutonomousAgent && (
+                                <span className="badge" style={{ background: "var(--warning-soft)", color: "var(--warning)" }}>Autonomous</span>
+                              )}
+                              <span className="badge success">Created</span>
+                              {hasDrafted && <span className="badge success">Drafted</span>}
+                              {hasExecuted && <span className="badge success">Executed</span>}
+                            </div>
+                            {(fromSignal || riskOneLiner || executionBullets.length > 0) && (
+                              <div className="stack-2xs text-xs muted" style={{ marginTop: "0.2rem" }}>
+                                {fromSignal && (
+                                  <span className="truncate" style={{ display: "block", maxWidth: "100%" }} title={fromSignal}>
+                                    Signal: {fromSignal.length > 72 ? `${fromSignal.slice(0, 72)}…` : fromSignal}
+                                  </span>
+                                )}
+                                {riskOneLiner && <span style={{ display: "block" }}>{riskOneLiner}</span>}
+                                {executionBullets.length > 0 && (
+                                  <ul className="list-reset" style={{ margin: 0, paddingLeft: 0 }}>
+                                    {executionBullets.slice(0, 3).map((b, i) => (
+                                      <li key={i} style={{ marginTop: "0.1rem" }}>• {b}</li>
+                                    ))}
+                                    {executionBullets.length > 3 && (
+                                      <li style={{ marginTop: "0.1rem" }}>… +{executionBullets.length - 3} more</li>
+                                    )}
+                                  </ul>
+                                )}
+                              </div>
                             )}
-                            <span className="badge success">Created</span>
-                            {hasDrafted && <span className="badge success">Drafted</span>}
-                            {hasExecuted && <span className="badge success">Executed</span>}
                           </div>
                           <span className="muted text-xs" style={{ flexShrink: 0 }}>
                             {isOpen ? "▼" : "▶"}
@@ -389,8 +463,8 @@ export function AgentTracesClient() {
                                       style={{
                                         padding: "0.15rem 0.5rem",
                                         borderRadius: 4,
-                                        background: "var(--muted)",
-                                        color: "var(--text)",
+                                        background: "var(--warning-soft)",
+                                        color: "var(--warning)",
                                       }}
                                       title="Created by autonomous agent"
                                     >
@@ -487,8 +561,8 @@ export function AgentTracesClient() {
                                       style={{
                                         padding: "0.15rem 0.5rem",
                                         borderRadius: 4,
-                                        background: "var(--muted)",
-                                        color: "var(--text)",
+                                        background: "var(--warning-soft)",
+                                        color: "var(--warning)",
                                       }}
                                       title="Created by autonomous agent"
                                     >
@@ -520,6 +594,17 @@ export function AgentTracesClient() {
                                 )}
                               </div>
                             ))}
+                            {executionBullets.length > 0 && (
+                              <div className="card-flat stack-xs" style={{ padding: "0.75rem 1rem" }}>
+                                <h4 className="text-sm font-semibold" style={{ margin: 0 }}>Execution summary</h4>
+                                <p className="text-xs muted" style={{ margin: "0.2rem 0 0 0" }}>What was executed for this case:</p>
+                                <ul className="text-sm stack-2xs" style={{ margin: "0.35rem 0 0 0", paddingLeft: "1.25rem", listStyle: "disc" }}>
+                                  {executionBullets.map((b, i) => (
+                                    <li key={i}>{b}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
                             <div className="trace-actions row gap-xs" style={{ flexWrap: "wrap" }}>
                               <Link href={`/dashboard/plans?case=${riskCaseId}`} className="btn link btn-xs">
                                 View risk case
@@ -528,6 +613,20 @@ export function AgentTracesClient() {
                                 <Link href={`/dashboard/plans?plan=${latestPlanId}`} className="btn link btn-xs">
                                   View plan
                                 </Link>
+                              )}
+                              {riskCase && (
+                                <button
+                                  type="button"
+                                  className="btn secondary btn-xs"
+                                  style={{ color: "var(--danger)" }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmDeleteCaseId(riskCaseId);
+                                  }}
+                                  disabled={!!deletingCaseId}
+                                >
+                                  {deletingCaseId === riskCaseId ? "Deleting…" : "Delete case"}
+                                </button>
                               )}
                             </div>
                           </div>

@@ -320,7 +320,7 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
   const [listExpanded, setListExpanded] = useState(false);
   const [intervalMinutes, setIntervalMinutes] = useState(5);
   const [clearingAll, setClearingAll] = useState(false);
-  const [lastSyncTools, setLastSyncTools] = useState<{ name: string; status: string; count: number }[] | null>(null);
+  const [lastSyncTools, setLastSyncTools] = useState<{ name: string; status: string; count: number; rawCount?: number; parsedCount?: number; message?: string }[] | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<null | { type: "one"; id: string } | { type: "all" }>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const mounted = useRef(true);
@@ -662,6 +662,23 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
         </div>
       )}
 
+      {lastSyncTools && lastSyncTools.length > 0 && (
+        <div className="text-xs muted" style={{ margin: "0 0.75rem 0.5rem" }}>
+          <p style={{ margin: 0 }}>Last sync: {lastSyncTools.map((t) => {
+            if (t.message) return `${t.name}: ${t.message}`;
+            if (t.status === "error") return `${t.name}: error`;
+            if (t.status === "empty") return `${t.name}: ${t.rawCount === 0 ? "no data from Zapier" : "couldn't parse emails"}`;
+            const detail = t.rawCount != null || t.parsedCount != null
+              ? ` (${t.rawCount ?? "?"} returned, ${t.count} new)`
+              : ` ${t.count} item${t.count !== 1 ? "s" : ""}`;
+            return `${t.name}:${detail}`;
+          }).join(" · ")}</p>
+          {lastSyncTools.every((t) => t.status === "empty" || t.status === "error" || t.count === 0) && (
+            <p style={{ margin: "0.35rem 0 0 0" }}>Ensure your email app (e.g. Gmail) is in <strong>Input context</strong> in Dashboard → Integrations, then Sync again.</p>
+          )}
+        </div>
+      )}
+
       <div className="stack-sm collapsible-card__body scroll-40vh">
         {loading ? (
           <p className="muted text-sm">Loading…</p>
@@ -670,11 +687,6 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
             <p className="muted text-sm">
               {events.length === 0 ? "No events. Turn on Auto scan or Sync from Zapier." : "No events match filters. Show all or change selection."}
             </p>
-            {lastSyncTools && lastSyncTools.length > 0 && (
-              <p className="text-xs muted" style={{ marginTop: "0.25rem" }}>
-                Last sync: {lastSyncTools.map((t) => `${t.name}: ${t.status === "error" ? "error" : t.status === "empty" ? "0 items" : `${t.count} item${t.count !== 1 ? "s" : ""}`}`).join(" · ")}
-              </p>
-            )}
           </div>
         ) : (
           <>

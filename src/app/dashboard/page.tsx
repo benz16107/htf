@@ -5,6 +5,8 @@ import { db } from "@/lib/db";
 import { OverviewActivityHead } from "./OverviewActivityHead";
 import { OverviewAutonomousToggle } from "./OverviewAutonomousToggle";
 
+export const dynamic = "force-dynamic";
+
 export default async function DashboardHomePage() {
   const session = await getSession();
 
@@ -12,7 +14,17 @@ export default async function DashboardHomePage() {
   let pendingMitigations = 0;
   let activeRiskCases = 0;
   let automationLevel = "off";
-  let lastRun: { processed: number; created: number; executed: number; at: Date } | null = null;
+  let lastRun: {
+    runId: string;
+    processed: number;
+    created: number;
+    executed: number;
+    at: Date;
+    internalCandidates?: number;
+    externalCandidates?: number;
+    skipReasonsCount?: number;
+    summary?: string | null;
+  } | null = null;
 
   if (session?.companyId) {
     const company = await db.company.findUnique({
@@ -43,15 +55,27 @@ export default async function DashboardHomePage() {
       const completed = await db.autonomousAgentLog.findFirst({
         where: { companyId: session.companyId, actionType: "run_completed" },
         orderBy: { createdAt: "desc" },
-        select: { details: true, createdAt: true },
+        select: { runId: true, details: true, summary: true, createdAt: true },
       });
       if (completed?.details && typeof completed.details === "object") {
-        const d = completed.details as { processed?: number; created?: number; executed?: number };
+        const d = completed.details as {
+          processed?: number;
+          created?: number;
+          executed?: number;
+          internalCandidates?: number;
+          externalCandidates?: number;
+          skipReasonsCount?: number;
+        };
         lastRun = {
+          runId: completed.runId,
           processed: Number(d.processed ?? 0),
           created: Number(d.created ?? 0),
           executed: Number(d.executed ?? 0),
           at: completed.createdAt,
+          internalCandidates: typeof d.internalCandidates === "number" ? d.internalCandidates : undefined,
+          externalCandidates: typeof d.externalCandidates === "number" ? d.externalCandidates : undefined,
+          skipReasonsCount: typeof d.skipReasonsCount === "number" ? d.skipReasonsCount : undefined,
+          summary: completed.summary ?? undefined,
         };
       }
     } catch {
@@ -115,9 +139,28 @@ export default async function DashboardHomePage() {
               <p className="text-sm" style={{ margin: 0 }}>
                 <strong>{lastRun.processed}</strong> processed · <strong>{lastRun.created}</strong> risk cases created · <strong>{lastRun.executed}</strong> plans executed
               </p>
+              {(() => {
+                const parts = [
+                  lastRun.internalCandidates != null && lastRun.internalCandidates > 0 && `${lastRun.internalCandidates} internal`,
+                  lastRun.externalCandidates != null && lastRun.externalCandidates > 0 && `${lastRun.externalCandidates} external`,
+                ].filter(Boolean) as string[];
+                return parts.length > 0 ? (
+                  <p className="text-xs muted" style={{ margin: "0.35rem 0 0 0" }}>
+                    From {parts.join(", ")} signals
+                  </p>
+                ) : null;
+              })()}
+              {lastRun.skipReasonsCount != null && lastRun.skipReasonsCount > 0 && (
+                <p className="text-xs muted" style={{ margin: "0.25rem 0 0 0" }}>
+                  {lastRun.skipReasonsCount} skipped or issue{lastRun.skipReasonsCount === 1 ? "" : "s"}
+                </p>
+              )}
               <p className="text-xs muted" style={{ margin: "0.35rem 0 0 0" }}>
                 {formatRunTime(lastRun.at)}
               </p>
+              <Link href="/dashboard/logs" className="btn secondary btn-sm" style={{ marginTop: "0.75rem" }}>
+                View run
+              </Link>
             </div>
           ) : (
             <div className="overview-activity__empty stack-sm">

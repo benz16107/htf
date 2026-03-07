@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { ExternalSignalSection } from "./ExternalSignalSection";
@@ -10,6 +10,7 @@ import { AssessmentOutputsSection } from "./AssessmentOutputsSection";
 import { AssessmentArchiveSection } from "./AssessmentArchiveSection";
 import { ManualPreventiveCheck } from "./ManualPreventiveCheck";
 import type { SelectedSignal, AssessmentOutput, ArchivedOutput } from "./types";
+import { PENDING_OUTPUT_KEY } from "./types";
 
 type ArchiveConfirmState = null | "clear-all" | { type: "delete-item"; id: string };
 
@@ -22,16 +23,41 @@ export function TriggeredRiskClient() {
   const [outputs, setOutputs] = useState<AssessmentOutput[]>([]);
   const [archived, setArchived] = useState<ArchivedOutput[]>([]);
   const [archiveConfirm, setArchiveConfirm] = useState<ArchiveConfirmState>(null);
+  /** True only after we've applied restored state from localStorage (so persist effects don't overwrite with [] on first run) */
+  const [hasRestored, setHasRestored] = useState(false);
 
-  // Restore saved assessment outputs and selected signals on mount
+  // Restore saved assessment outputs, selected signals, and any pending output (completed while user was away)
   useEffect(() => {
     try {
       const raw = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setOutputs(parsed);
+      const pendingRaw = typeof localStorage !== "undefined" ? localStorage.getItem(PENDING_OUTPUT_KEY) : null;
+      const baseOutputs: AssessmentOutput[] = raw
+        ? (() => {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) && parsed.length > 0 ? parsed : [];
+          })()
+        : [];
+      if (pendingRaw) {
+        try {
+          const pending = JSON.parse(pendingRaw) as AssessmentOutput;
+          if (pending?.id && pending?.assessment) {
+            const merged = [...baseOutputs, pending];
+            setOutputs(merged);
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+            } catch {
+              /* ignore */
+            }
+            localStorage.removeItem(PENDING_OUTPUT_KEY);
+          } else {
+            setOutputs(baseOutputs);
+          }
+        } catch {
+          setOutputs(baseOutputs);
+          localStorage.removeItem(PENDING_OUTPUT_KEY);
         }
+      } else {
+        setOutputs(baseOutputs);
       }
       const signalsRaw = typeof localStorage !== "undefined" ? localStorage.getItem(SELECTED_SIGNALS_KEY) : null;
       if (signalsRaw) {
@@ -40,13 +66,17 @@ export function TriggeredRiskClient() {
           setSelectedSignals(signalsParsed);
         }
       }
+      // Defer so the first re-render still has hasRestored=false and persist effects skip (don't overwrite with []).
+      const t = setTimeout(() => setHasRestored(true), 0);
+      return () => clearTimeout(t);
     } catch {
-      // ignore invalid or missing storage
+      setHasRestored(true);
     }
   }, []);
 
-  // Persist selected signals whenever they change
+  // Persist selected signals whenever they change (only after restore so we don't overwrite with [] on mount)
   useEffect(() => {
+    if (!hasRestored) return;
     try {
       if (selectedSignals.length > 0) {
         localStorage.setItem(SELECTED_SIGNALS_KEY, JSON.stringify(selectedSignals));
@@ -56,7 +86,39 @@ export function TriggeredRiskClient() {
     } catch {
       // ignore quota or other errors
     }
-  }, [selectedSignals]);
+  }, [hasRestored, selectedSignals]);
+
+  // Refs so we can read latest state from cleanup / beforeunload
+  const selectedSignalsRef = useRef(selectedSignals);
+  const outputsRef = useRef(outputs);
+  const hasRestoredRef = useRef(hasRestored);
+  selectedSignalsRef.current = selectedSignals;
+  outputsRef.current = outputs;
+  hasRestoredRef.current = hasRestored;
+
+  // Save when leaving: on beforeunload (tab close/refresh) and on unmount (client-side navigation)
+  useEffect(() => {
+    const save = () => {
+      if (!hasRestoredRef.current) return;
+      try {
+        const sigs = selectedSignalsRef.current;
+        const out = outputsRef.current;
+        if (sigs.length > 0) {
+          localStorage.setItem(SELECTED_SIGNALS_KEY, JSON.stringify(sigs));
+        } else {
+          localStorage.removeItem(SELECTED_SIGNALS_KEY);
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(out));
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener("beforeunload", save);
+    return () => {
+      window.removeEventListener("beforeunload", save);
+      save(); // also save on unmount (e.g. client-side nav away)
+    };
+  }, []);
 
   // Load archive from API on mount
   useEffect(() => {
@@ -91,14 +153,15 @@ export function TriggeredRiskClient() {
     };
   }, []);
 
-  // Persist outputs whenever they change (clear storage when empty)
+  // Persist outputs whenever they change (only after restore so we don't overwrite with [] on mount)
   useEffect(() => {
+    if (!hasRestored) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(outputs));
     } catch {
       // ignore quota or other errors
     }
-  }, [outputs]);
+  }, [hasRestored, outputs]);
 
   const addToAssessment = useCallback((item: SelectedSignal) => {
     setSelectedSignals((prev) => {
@@ -112,11 +175,29 @@ export function TriggeredRiskClient() {
   }, []);
 
   const addOutput = useCallback((output: AssessmentOutput) => {
-    setOutputs((prev) => [...prev, output]);
+    const next = [...outputsRef.current, output];
+    outputsRef.current = next;
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      }
+    } catch {
+      /* ignore */
+    }
+    setOutputs(next);
   }, []);
 
   const removeOutput = useCallback((id: string) => {
-    setOutputs((prev) => prev.filter((o) => o.id !== id));
+    const next = outputsRef.current.filter((o) => o.id !== id);
+    outputsRef.current = next;
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      }
+    } catch {
+      /* ignore */
+    }
+    setOutputs(next);
   }, []);
 
   const doClearArchive = useCallback(async () => {

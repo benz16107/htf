@@ -91,7 +91,7 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
           actions: draftedPlan.actions,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success) {
         const hadFailures = data.executionResults?.failed?.length > 0;
         if (!hadFailures) {
@@ -103,8 +103,14 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
           );
           alert("Some actions failed. Plan stayed in draft.\n\n" + lines.join("\n\n"));
         }
-      } else alert(data.error || "Execution failed");
-    } catch { alert("Failed to execute plan"); } finally { setIsExecuting(false); }
+      } else {
+        const msg = data.error || (res.ok ? "Execution failed" : `Request failed (${res.status})`);
+        alert(msg);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to execute plan (network or server error)";
+      alert(msg);
+    } finally { setIsExecuting(false); }
   };
 
   const handleDeleteDraftConfirm = async () => {
@@ -320,8 +326,8 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
                   style={{
                     padding: "0.15rem 0.5rem",
                     borderRadius: 4,
-                    background: "var(--muted)",
-                    color: "var(--text)",
+                    background: "var(--warning-soft)",
+                    color: "var(--warning)",
                     fontWeight: 500,
                   }}
                   title="Risk assessment created by autonomous agent"
@@ -573,8 +579,8 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
                 style={{
                   padding: "0.15rem 0.5rem",
                   borderRadius: 4,
-                  background: "var(--muted)",
-                  color: "var(--text)",
+                  background: "var(--accent-soft)",
+                  color: "var(--accent-text)",
                   fontWeight: 500,
                 }}
                 title="Mitigation plan created by autonomous agent"

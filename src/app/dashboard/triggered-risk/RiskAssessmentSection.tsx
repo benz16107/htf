@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import type { SelectedSignal, AssessmentOutput } from "./types";
+import { PENDING_OUTPUT_KEY } from "./types";
 
 type Props = {
   selectedSignals: SelectedSignal[];
@@ -15,6 +16,7 @@ export function RiskAssessmentSection({
   onOutput,
 }: Props) {
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -59,6 +61,7 @@ export function RiskAssessmentSection({
       return;
     }
     setLoading(true);
+    setErrorMessage(null);
     try {
       const res = await fetch("/api/agents/signal-risk", {
         method: "POST",
@@ -85,33 +88,49 @@ export function RiskAssessmentSection({
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!mounted.current) return;
+
+      const output: AssessmentOutput = {
+        id: `output-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        triggerType: "Risk assessment (selected signals)",
+        assessedAt: new Date().toISOString(),
+        issueTitle: data.riskAssessment?.issueTitle ?? undefined,
+        entityMap: {
+          instruction: "Assess risk based on ALL of the following signals selected for this assessment.",
+          internalSignalsCount: String(internalSignals.length),
+          externalSignalsCount: String(externalSignals.length),
+          manualScenariosCount: String(manualSignals.length),
+          internalSignals: internalList,
+          externalSignals: externalList,
+          manualScenarios: manualList,
+        },
+        timeWindow: { startDate: new Date().toISOString().split("T")[0], expectedDurationDays: 7 },
+        assumptions: [],
+        assessment: data.riskAssessment ?? {},
+      };
 
       if (res.ok && data.riskAssessment) {
-        const output: AssessmentOutput = {
-          id: `output-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-          triggerType: "Risk assessment (selected signals)",
-          assessedAt: new Date().toISOString(),
-          issueTitle: data.riskAssessment?.issueTitle ?? undefined,
-          entityMap: {
-            instruction: "Assess risk based on ALL of the following signals selected for this assessment.",
-            internalSignalsCount: String(internalSignals.length),
-            externalSignalsCount: String(externalSignals.length),
-            manualScenariosCount: String(manualSignals.length),
-            internalSignals: internalList,
-            externalSignals: externalList,
-            manualScenarios: manualList,
-          },
-          timeWindow: { startDate: new Date().toISOString().split("T")[0], expectedDurationDays: 7 },
-          assumptions: [],
-          assessment: data.riskAssessment,
-        };
-        onOutput(output);
+        if (mounted.current) {
+          onOutput(output);
+        } else {
+          try {
+            localStorage.setItem(PENDING_OUTPUT_KEY, JSON.stringify(output));
+          } catch {
+            /* ignore */
+          }
+        }
       } else {
-        alert(data.error || "Risk assessment failed.");
+        const msg = data.error || "Risk assessment failed.";
+        if (mounted.current) {
+          setErrorMessage(msg);
+          alert(msg);
+        }
       }
-    } catch {
-      if (mounted.current) alert("Network error.");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Network error.";
+      if (mounted.current) {
+        setErrorMessage(msg);
+        alert(msg);
+      }
     } finally {
       if (mounted.current) setLoading(false);
     }
@@ -145,6 +164,16 @@ export function RiskAssessmentSection({
         </div>
       ) : (
         <p className="muted text-sm">No signals yet. Add from External/Internal signal or Manual case above.</p>
+      )}
+      {loading && (
+        <p className="text-sm text-amber-600 dark:text-amber-400">
+          Assessing… This may take 1–2 minutes. Please stay on this page.
+        </p>
+      )}
+      {errorMessage && (
+        <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+          {errorMessage}
+        </p>
       )}
       <button
         type="button"

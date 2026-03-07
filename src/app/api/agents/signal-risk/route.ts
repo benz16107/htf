@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { runSignalRiskAgent, RiskCaseInput } from "@/server/agents/signal-agent";
 import { getSession } from "@/lib/auth";
 
+// Allow long-running Gemini + Backboard; default serverless is often 10s
+export const maxDuration = 120;
+
 export async function POST(req: Request) {
     try {
         const session = await getSession();

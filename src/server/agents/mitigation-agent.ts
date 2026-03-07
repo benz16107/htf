@@ -9,6 +9,61 @@ const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY || "",
 });
 
+/** Parse LLM response that may be markdown-wrapped or have trailing commas / minor JSON errors. */
+function parseMitigationPlanResponse(raw: string): MitigationPlanOutput {
+    let text = raw.trim();
+    // Strip markdown code blocks
+    const codeBlock = /^```(?:json)?\s*([\s\S]*?)```\s*$/;
+    const match = text.match(codeBlock);
+    if (match) text = match[1].trim();
+    // Try parse
+    const tryParse = (s: string): MitigationPlanOutput => {
+        const parsed = JSON.parse(s) as MitigationPlanOutput;
+        if (!parsed || typeof parsed !== "object") throw new Error("Invalid plan shape");
+        if (!Array.isArray(parsed.actions)) parsed.actions = [];
+        if (typeof parsed.executionMode !== "string") parsed.executionMode = "human_in_loop";
+        if (typeof parsed.summary !== "string") parsed.summary = "";
+        return parsed;
+    };
+    try {
+        return tryParse(text);
+    } catch {
+        // Fix trailing commas (common LLM mistake)
+        let fixed = text.replace(/,(\s*[}\]])/g, "$1");
+        try {
+            return tryParse(fixed);
+        } catch {
+            // Try to extract a single top-level JSON object
+            const start = text.indexOf("{");
+            if (start >= 0) {
+                let depth = 0;
+                let end = -1;
+                for (let i = start; i < text.length; i++) {
+                    if (text[i] === "{") depth++;
+                    else if (text[i] === "}") {
+                        depth--;
+                        if (depth === 0) {
+                            end = i;
+                            break;
+                        }
+                    }
+                }
+                if (end > start) {
+                    fixed = text.slice(start, end + 1).replace(/,(\s*[}\]])/g, "$1");
+                    try {
+                        return tryParse(fixed);
+                    } catch {
+                        //
+                    }
+                }
+            }
+        }
+    }
+    throw new Error(
+        "Mitigation plan response was not valid JSON. The model may have returned markdown or truncated output. Try again or simplify the scenario."
+    );
+}
+
 export type ActionDraft = {
     type: "email" | "erp_update" | "zapier_action" | "zapier_mcp" | "insight" | "recommendation" | "notification";
     recipientOrEndpoint: string;
@@ -155,7 +210,7 @@ export async function generateMitigationPlan(
     });
 
     if (!response.text) throw new Error("No response from generating mitigation plan");
-    const output: MitigationPlanOutput = JSON.parse(response.text);
+    const output = parseMitigationPlanResponse(response.text);
 
     // Save the Mitigation Plan to Prisma
     const plan = await db.mitigationPlan.create({

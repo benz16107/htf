@@ -13,7 +13,7 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
 
   const fetchConfig = async () => {
     try {
-      const res = await fetch("/api/settings/autonomous");
+      const res = await fetch("/api/settings/autonomous", { cache: "no-store" });
       const data = await res.json();
       setOn(Boolean(data.config?.agentRunning));
     } catch {
@@ -25,6 +25,15 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
 
   useEffect(() => {
     fetchConfig();
+  }, []);
+
+  // Refetch when user returns to the tab/page so the toggle always reflects server state
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") fetchConfig();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
 
   useEffect(() => {
@@ -83,7 +92,11 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to update");
-      setOn(Boolean(data.config?.agentRunning));
+      const newOn = Boolean(data.config?.agentRunning);
+      setOn(newOn);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("agent-running-change", { detail: { on: newOn } }));
+      }
     } catch {
       // keep current state
     } finally {
@@ -110,6 +123,7 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
           disabled={saving}
           onClick={toggle}
           title={on ? "On — click to turn off" : "Off — click to turn on"}
+          className={on ? "agent-toggle--on" : undefined}
           style={{
             width: 44,
             height: 24,
@@ -135,14 +149,16 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
             }}
           />
         </button>
-        <span className="text-sm font-medium" style={{ margin: 0 }}>On</span>
+        <span className="text-sm font-medium" style={{ margin: 0, color: on ? "var(--accent-text)" : undefined }}>
+          On
+        </span>
       </div>
     );
   }
 
   return (
     <div className="row start gap-sm" style={{ alignItems: "center", flexWrap: "wrap" }}>
-      <span className="text-sm font-medium" style={{ margin: 0 }}>
+      <span className="text-sm font-medium" style={{ margin: 0, color: on ? "var(--accent-text)" : undefined }}>
         Agent
       </span>
       <button
@@ -151,6 +167,7 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
         aria-checked={on}
         disabled={saving}
         onClick={toggle}
+        className={on ? "agent-toggle--on" : undefined}
         style={{
           width: 44,
           height: 24,
@@ -160,6 +177,7 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
           cursor: saving ? "not-allowed" : "pointer",
           position: "relative",
           flexShrink: 0,
+          transition: "background 0.2s ease",
         }}
         title={on ? "Running — click to stop" : "Stopped — click to start"}
       >
@@ -176,7 +194,7 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
           }}
         />
       </button>
-      <span className="text-sm muted" style={{ margin: 0 }}>
+      <span className="text-sm muted" style={{ margin: 0, color: on ? "var(--accent-text)" : undefined }}>
         {saving ? "Updating…" : on ? "Running" : "Stopped"}
       </span>
     </div>
