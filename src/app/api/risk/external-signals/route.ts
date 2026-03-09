@@ -67,7 +67,41 @@ export async function DELETE() {
 }
 
 function titleKey(title: string): string {
-  return (title || "").toLowerCase().trim();
+  return (title || "")
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeUrl(raw?: string | null): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase();
+    const pathname = u.pathname.replace(/\/+$/, "").toLowerCase();
+    const kept = new URLSearchParams();
+    for (const [k, v] of u.searchParams.entries()) {
+      const key = k.toLowerCase();
+      if (key.startsWith("utm_")) continue;
+      if (key === "gclid" || key === "fbclid" || key === "mc_cid" || key === "mc_eid" || key === "ref" || key === "source") continue;
+      kept.set(k, v);
+    }
+    const query = kept.toString();
+    return `${host}${pathname}${query ? `?${query}` : ""}`;
+  } catch {
+    return raw.trim().toLowerCase();
+  }
+}
+
+function signalFingerprint(signal: { title?: string | null; url?: string | null; source?: string | null }): string {
+  const normalizedUrl = normalizeUrl(signal.url);
+  if (normalizedUrl) return `url:${normalizedUrl}`;
+  const normalizedTitle = titleKey(signal.title ?? "");
+  const source = (signal.source ?? "").toLowerCase().trim();
+  return `title:${normalizedTitle}|source:${source}`;
 }
 
 type CompanyContext = {
@@ -173,12 +207,12 @@ export async function POST() {
 
   const existing = await db.savedExternalSignal.findMany({
     where: { companyId },
-    select: { title: true },
+    select: { title: true, url: true, source: true },
   });
-  const existingKeys = new Set(existing.map((r) => titleKey(r.title)));
+  const existingKeys = new Set(existing.map((r) => signalFingerprint(r)));
 
   for (const s of pulled) {
-    const key = titleKey(s.title);
+    const key = signalFingerprint(s);
     if (existingKeys.has(key)) continue;
     existingKeys.add(key);
     await db.savedExternalSignal.create({

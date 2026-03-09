@@ -1,6 +1,6 @@
 /**
  * Explains how risk detection works: auto threat detection from company profile,
- * internal (Zapier) vs external signals, and manual preventive checks.
+ * internal (direct email, connected tools, live events) vs external signals, and manual preventive checks.
  */
 export function RiskDetectionOverview() {
   return (
@@ -12,10 +12,10 @@ export function RiskDetectionOverview() {
 
       <div className="stack-sm">
         <div>
-          <span className="trace-title text-sm">Internal (Zapier)</span>
-          <p className="muted text-xs mt-2xs">What has happened inside your systems</p>
+          <span className="trace-title text-sm">Internal (email + connected tools)</span>
+          <p className="muted text-xs mt-2xs">What has happened inside your systems, inboxes, and business apps</p>
           <ul className="text-sm muted list-disc mt-2xs">
-            <li>Emails, Calendar</li>
+            <li>Direct Gmail sync, live email events, Calendar</li>
             <li>ShipStation, Shippo</li>
             <li>Shopify, NetSuite</li>
           </ul>

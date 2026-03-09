@@ -1,4 +1,5 @@
 import { AppHeader } from "@/components/AppHeader";
+import { AnimeStagger } from "@/components/AnimeStagger";
 import { getSession, hasCompletedSetup } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { redirect } from "next/navigation";
@@ -83,11 +84,13 @@ export default async function PostAnalysisPage() {
   ]);
 
   return (
-    <div className="stack-xl" style={{ maxWidth: 1100 }}>
-      <AppHeader title="Memory" />
+    <AnimeStagger className="stack-xl" style={{ maxWidth: 1100 }} itemSelector="[data-animate-section]" delayStep={85}>
+      <div data-animate-section>
+        <AppHeader title="Memory" />
+      </div>
 
       {/* Overview: company status and execution summary */}
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <h2 className="text-lg font-semibold" style={{ margin: 0 }}>Overview</h2>
         <p className="text-sm muted" style={{ margin: 0 }}>
           Status of your company context and how memory is used across executions.
@@ -118,7 +121,7 @@ export default async function PostAnalysisPage() {
       </section>
 
       {/* Memory from past executions */}
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <h2 className="text-lg font-semibold" style={{ margin: 0 }}>Memory from past executions</h2>
         <p className="text-sm muted" style={{ margin: 0 }}>
           Reflections and learnings from executed plans. Used to improve future assessments.
@@ -133,11 +136,13 @@ export default async function PostAnalysisPage() {
                 <p className="muted">No pending reflections.</p>
               </div>
             ) : (
-              <div className="stack-sm" style={{ marginTop: "0.75rem" }}>
+              <AnimeStagger className="stack-sm" style={{ marginTop: "0.75rem" }}>
                 {unresolvedExecutions.map((plan) => (
-                  <PostAnalysisClient key={plan.id} plan={plan} />
+                  <div key={plan.id} data-animate-item>
+                    <PostAnalysisClient plan={plan} />
+                  </div>
                 ))}
-              </div>
+              </AnimeStagger>
             )}
           </div>
 
@@ -149,7 +154,7 @@ export default async function PostAnalysisPage() {
                 <p className="muted">Complete reflections above to build incident intelligence.</p>
               </div>
             ) : (
-              <div className="stack-sm" style={{ marginTop: "0.75rem" }}>
+              <AnimeStagger className="stack-sm" style={{ marginTop: "0.75rem" }}>
                 {playbooks.map((pb) => {
                   const eff = asRecord(pb.effectiveness);
                   const verdict = String(eff?.verdict ?? "unknown");
@@ -162,7 +167,7 @@ export default async function PostAnalysisPage() {
                   const learnings = asStringArray(pb.learnings);
 
                   return (
-                    <div key={pb.id} className="card stack" style={{ borderLeft: `3px solid ${borderColor}`, padding: "1rem" }}>
+                    <div key={pb.id} className="card stack" style={{ borderLeft: `3px solid ${borderColor}`, padding: "1rem" }} data-animate-item>
                       <div className="row between">
                         <h4 className="text-sm font-semibold" style={{ margin: 0, textTransform: "capitalize" }}>
                           {(pb.incidentClass || "Unknown").replace(/_/g, " ")}
@@ -194,11 +199,11 @@ export default async function PostAnalysisPage() {
                     </div>
                   );
                 })}
-              </div>
+              </AnimeStagger>
             )}
           </div>
         </div>
       </section>
-    </div>
+    </AnimeStagger>
   );
 }

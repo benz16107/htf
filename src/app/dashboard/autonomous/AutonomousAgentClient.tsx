@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AnimeStagger } from "@/components/AnimeStagger";
+import { StatusBanner } from "@/components/StatusBanner";
 
 type Config = {
   id: string | null;
@@ -24,6 +26,16 @@ type Config = {
   updatedAt: string | null;
 };
 
+type LastRunSnapshot = {
+  processed: number;
+  created: number;
+  executed: number;
+  skipReasons?: string[];
+  completedAt: string;
+};
+
+const LAST_RUN_STORAGE_KEY = "htf-autonomous-last-run";
+
 const AUTOMATION_LEVELS = [
   { value: "off", label: "Off", desc: "No automatic assessment or execution." },
   { value: "assess_only", label: "Assess only", desc: "Run risk assessment on signals only; no risk cases or plans created." },
@@ -32,20 +44,21 @@ const AUTOMATION_LEVELS = [
 ];
 
 const SIGNAL_SOURCES = [
-  { value: "internal_only", label: "Internal only", desc: "Only ingested events (e.g. email, sheets)." },
+  { value: "internal_only", label: "Internal only", desc: "Only internal signals (e.g. direct Gmail, live inbox events, sheets, CRM, ERP)." },
   { value: "external_only", label: "External only", desc: "Only saved external signals (e.g. news)." },
   { value: "both", label: "Both", desc: "Internal and external signals." },
 ];
 
 const INTERNAL_SIGNAL_MODES = [
-  { value: "lookback", label: "Lookback (poll)", desc: "When the agent runs (e.g. on a schedule), check for internal signals from the last N minutes." },
-  { value: "live", label: "Live", desc: "Start a case as soon as an internal signal is received (e.g. when ingest runs from Zapier)." },
+  { value: "lookback", label: "Lookback (poll)", desc: "When the agent runs on a schedule, check recent internal signals gathered by sync or polling." },
+  { value: "live", label: "Live", desc: "Start a case as soon as an internal signal is received (e.g. Gmail push or another newly ingested event)." },
 ];
 
 const SEVERITIES = ["MINOR", "MODERATE", "SEVERE", "CRITICAL"];
 
 const ACTION_TYPES = [
   { value: "zapier_mcp", label: "Zapier / MCP tools" },
+  { value: "zapier_action", label: "Zapier action (legacy)" },
   { value: "email", label: "Email" },
   { value: "notification", label: "Notification" },
   { value: "erp_update", label: "ERP update (simulated)" },
@@ -73,13 +86,28 @@ function Field({
   );
 }
 
-export default function AutonomousAgentClient() {
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+export default function AutonomousAgentClient({
+  recentCases: _recentCases,
+}: {
+  recentCases?: unknown[];
+}) {
   const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
-  const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const [lastRun, setLastRun] = useState<{ processed: number; created: number; executed: number; skipReasons?: string[] } | null>(null);
+  const [status, setStatus] = useState<{
+    variant: "info" | "success" | "error";
+    title: string;
+    message?: string;
+  } | null>(null);
+  const [lastRun, setLastRun] = useState<LastRunSnapshot | null>(null);
 
   useEffect(() => {
     fetch("/api/settings/autonomous")
@@ -92,8 +120,34 @@ export default function AutonomousAgentClient() {
           });
         }
       })
-      .catch(() => setMessage({ type: "err", text: "Failed to load config." }))
+      .catch(() =>
+        setStatus({
+          variant: "error",
+          title: "Could not load agent settings",
+          message: "Refresh the page and try again.",
+        }),
+      )
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(LAST_RUN_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as LastRunSnapshot;
+      if (
+        parsed &&
+        typeof parsed.processed === "number" &&
+        typeof parsed.created === "number" &&
+        typeof parsed.executed === "number" &&
+        typeof parsed.completedAt === "string"
+      ) {
+        setLastRun(parsed);
+      }
+    } catch {
+      // ignore invalid local cache
+    }
   }, []);
 
   const update = (partial: Partial<Config>) => {
@@ -104,7 +158,11 @@ export default function AutonomousAgentClient() {
   const save = async () => {
     if (!config) return;
     setSaving(true);
-    setMessage(null);
+    setStatus({
+      variant: "info",
+      title: "Saving settings",
+      message: "Updating automation rules, thresholds, and execution limits.",
+    });
     try {
       const res = await fetch("/api/settings/autonomous", {
         method: "PATCH",
@@ -129,9 +187,20 @@ export default function AutonomousAgentClient() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed");
       if (data.config) setConfig(data.config);
-      setMessage({ type: "ok", text: "Settings saved." });
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("autonomous-config-change"));
+      }
+      setStatus({
+        variant: "success",
+        title: "Settings saved",
+        message: "Your autonomous agent preferences are now up to date.",
+      });
     } catch (e) {
-      setMessage({ type: "err", text: e instanceof Error ? e.message : "Failed to save." });
+      setStatus({
+        variant: "error",
+        title: "Save failed",
+        message: e instanceof Error ? e.message : "Failed to save.",
+      });
     } finally {
       setSaving(false);
     }
@@ -139,27 +208,45 @@ export default function AutonomousAgentClient() {
 
   const runNow = async () => {
     setRunning(true);
-    setMessage(null);
+    setStatus({
+      variant: "info",
+      title: "Running autonomous agent",
+      message: "This may take a moment while signals are assessed and actions are prepared.",
+    });
     setLastRun(null);
     try {
       const res = await fetch("/api/agents/autonomous/run", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Run failed");
-      setLastRun({
+      const nextRun: LastRunSnapshot = {
         processed: data.processed ?? 0,
         created: data.created ?? 0,
         executed: data.executed ?? 0,
         skipReasons: data.skipReasons,
-      });
+        completedAt: new Date().toISOString(),
+      };
+      setLastRun(nextRun);
+      try {
+        if (typeof window !== "undefined") {
+          localStorage.setItem(LAST_RUN_STORAGE_KEY, JSON.stringify(nextRun));
+        }
+      } catch {
+        // ignore localStorage failures
+      }
       const execText = data.executed === 0 && Array.isArray(data.skipReasons) && data.skipReasons.length > 0
         ? ` Processed ${data.processed ?? 0}, created ${data.created ?? 0}, executed 0. Reasons execution was skipped: ${data.skipReasons.join("; ")}`
         : (data.message || `Processed ${data.processed ?? 0}, created ${data.created ?? 0}, executed ${data.executed ?? 0}.`);
-      setMessage({
-        type: "ok",
-        text: execText,
+      setStatus({
+        variant: "success",
+        title: "Run completed",
+        message: execText.trim(),
       });
     } catch (e) {
-      setMessage({ type: "err", text: e instanceof Error ? e.message : "Run failed." });
+      setStatus({
+        variant: "error",
+        title: "Run failed",
+        message: e instanceof Error ? e.message : "Run failed.",
+      });
     } finally {
       setRunning(false);
     }
@@ -180,24 +267,19 @@ export default function AutonomousAgentClient() {
     );
   }
 
+  const showInternalSignals = config.signalSources === "internal_only" || config.signalSources === "both";
+  const showExternalSignals = config.signalSources === "external_only" || config.signalSources === "both";
+
   return (
-    <div className="stack-xl">
-      {message && (
-        <div
-          className="card-flat"
-          style={{
-            padding: "0.6rem 1rem",
-            background: message.type === "ok" ? "var(--success-soft)" : "var(--danger-soft)",
-            color: message.type === "ok" ? "var(--success)" : "var(--danger)",
-            borderRadius: "var(--radius)",
-          }}
-        >
-          {message.text}
+    <AnimeStagger className="stack-xl" itemSelector="[data-animate-section]" delayStep={85}>
+      {status ? (
+        <div data-animate-section>
+          <StatusBanner variant={status.variant} title={status.title} message={status.message} />
         </div>
-      )}
+      ) : null}
 
       {lastRun && (
-        <div className="card stack-sm">
+        <div className="card stack-sm" data-animate-section>
           <h3 className="text-sm uppercase muted" style={{ margin: 0 }}>Last run</h3>
           <p className="text-sm" style={{ margin: 0 }}>
             Processed <strong>{lastRun.processed}</strong> · Created <strong>{lastRun.created}</strong> risk cases · Auto-executed <strong>{lastRun.executed}</strong> plans
@@ -207,11 +289,13 @@ export default function AutonomousAgentClient() {
               Execution skip reasons: {lastRun.skipReasons.join("; ")}
             </p>
           )}
-          <p className="text-xs muted" style={{ margin: 0 }}>Traces appear on the Autonomous Agent page.</p>
+          <p className="text-xs muted" style={{ margin: 0 }}>
+            Last completed {formatDateTime(lastRun.completedAt)}. Traces appear on the Autonomous Agent page.
+          </p>
         </div>
       )}
 
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <h2 className="text-lg" style={{ margin: 0 }}>Automation level</h2>
         <p className="text-sm muted" style={{ margin: 0 }}>
           How much the agent does without human review.
@@ -240,7 +324,7 @@ export default function AutonomousAgentClient() {
         </div>
       </section>
 
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <h2 className="text-lg" style={{ margin: 0 }}>Signal sources</h2>
         <p className="text-sm muted" style={{ margin: 0 }}>
           Which signals to process when the agent runs.
@@ -269,82 +353,113 @@ export default function AutonomousAgentClient() {
         </div>
       </section>
 
-      {(config.signalSources === "internal_only" || config.signalSources === "both") && (
-        <section className="card stack">
-          <h2 className="text-lg" style={{ margin: 0 }}>Internal signal timing</h2>
-          <p className="text-sm muted" style={{ margin: 0 }}>
-            When to pick up internal signals (e.g. from ingest/Zapier): poll on a schedule (lookback) or trigger as soon as something is received (live).
-          </p>
-          <div className="stack-sm" style={{ marginTop: "0.75rem" }}>
-            {INTERNAL_SIGNAL_MODES.map((opt) => (
-              <label
-                key={opt.value}
-                className="row start"
-                style={{ gap: "0.6rem", cursor: "pointer" }}
+      <section className="card stack" data-animate-section>
+        <h2 className="text-lg" style={{ margin: 0 }}>Signal retrieval settings</h2>
+        <p className="text-sm muted" style={{ margin: 0 }}>
+          Configure how the autonomous agent processes internal and external signals. When both are enabled, each source gets its own panel.
+        </p>
+        <div
+          className="stack-sm"
+          style={{
+            marginTop: "1rem",
+            display: "grid",
+            gridTemplateColumns:
+              showInternalSignals && showExternalSignals
+                ? "repeat(2, minmax(0, 1fr))"
+                : "minmax(0, 1fr)",
+            alignItems: "start",
+          }}
+        >
+          {showExternalSignals && (
+            <div className="card-flat stack" style={{ padding: "1rem" }}>
+              <div className="stack-xs">
+                <h3 className="text-sm uppercase muted" style={{ margin: 0 }}>External signals</h3>
+                <p className="text-sm muted" style={{ margin: 0 }}>
+                  Set how far back the agent should scan saved external signals such as news and market updates.
+                </p>
+              </div>
+              <Field id="external-lookback" label="Lookback window (minutes)" hint="e.g. 10 = last 10 min, 1440 = last 24 hours">
+                <input
+                  id="external-lookback"
+                  type="number"
+                  min={1}
+                  max={10080}
+                  value={config.externalSignalLookbackMinutes}
+                  onChange={(e) =>
+                    update({
+                      externalSignalLookbackMinutes: Math.min(10080, Math.max(1, Number(e.target.value) || 1)),
+                    })
+                  }
+                  style={{ width: "100%" }}
+                />
+              </Field>
+              <p className="text-xs muted" style={{ margin: 0 }}>
+                External signals always use this saved-signal window and are unaffected by the internal live mode setting.
+              </p>
+            </div>
+          )}
+          {showInternalSignals && (
+            <div className="card-flat stack" style={{ padding: "1rem" }}>
+              <div className="stack-xs">
+                <h3 className="text-sm uppercase muted" style={{ margin: 0 }}>Internal signals</h3>
+                <p className="text-sm muted" style={{ margin: 0 }}>
+                  Choose how internal signals are picked up: scheduled lookback for synced or polled sources, or live mode for direct Gmail push and other immediate inbound events.
+                </p>
+              </div>
+              <div className="card-flat stack-xs" style={{ padding: "0.75rem" }}>
+                <p className="text-sm font-medium" style={{ margin: 0 }}>Recommended setup</p>
+                <p className="muted text-xs" style={{ margin: 0 }}>
+                  Configure direct Gmail and Gmail push in Dashboard → Integrations for inbox-style email. Use the Signals & risk internal Configure panel for display filters and scan settings.
+                </p>
+              </div>
+              <div className="stack-sm">
+                {INTERNAL_SIGNAL_MODES.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className="row start"
+                    style={{ gap: "0.6rem", cursor: "pointer" }}
+                  >
+                    <input
+                      type="radio"
+                      name="internalSignalMode"
+                      value={opt.value}
+                      checked={config.internalSignalMode === opt.value}
+                      onChange={() => update({ internalSignalMode: opt.value })}
+                      style={{ marginTop: "0.2rem" }}
+                    />
+                    <div className="stack-xs">
+                      <span className="font-medium">{opt.label}</span>
+                      <p className="text-sm muted" style={{ margin: 0 }}>{opt.desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              <Field
+                id="internal-lookback"
+                label="Lookback window (minutes)"
+                hint={config.internalSignalMode === "live" ? "Not used for live Gmail push or other immediate inbound events." : "e.g. 10 = last 10 min, 1440 = last 24 hours"}
               >
                 <input
-                  type="radio"
-                  name="internalSignalMode"
-                  value={opt.value}
-                  checked={config.internalSignalMode === opt.value}
-                  onChange={() => update({ internalSignalMode: opt.value })}
-                  style={{ marginTop: "0.2rem" }}
+                  id="internal-lookback"
+                  type="number"
+                  min={1}
+                  max={10080}
+                  value={config.internalSignalLookbackMinutes}
+                  onChange={(e) =>
+                    update({
+                      internalSignalLookbackMinutes: Math.min(10080, Math.max(1, Number(e.target.value) || 1)),
+                    })
+                  }
+                  style={{ width: "100%" }}
+                  disabled={config.internalSignalMode === "live"}
                 />
-                <div className="stack-xs">
-                  <span className="font-medium">{opt.label}</span>
-                  <p className="text-sm muted" style={{ margin: 0 }}>{opt.desc}</p>
-                </div>
-              </label>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="card stack">
-        <h2 className="text-lg" style={{ margin: 0 }}>Signal lookback</h2>
-        <p className="text-sm muted" style={{ margin: 0 }}>
-          How far back (in minutes) to check for unprocessed signals when using lookback. Only used for internal signals when Internal signal timing is &quot;Lookback (poll)&quot;; external signals always use their window. (Max 10080 = 7 days.)
-        </p>
-        <div className="grid two stack-sm" style={{ marginTop: "1rem" }}>
-          <Field
-            id="internal-lookback"
-            label="Internal signals (minutes)"
-            hint={config.internalSignalMode === "live" ? "Not used when Live is selected." : "e.g. 10 = last 10 min, 1440 = last 24 hours"}
-          >
-            <input
-              id="internal-lookback"
-              type="number"
-              min={1}
-              max={10080}
-              value={config.internalSignalLookbackMinutes}
-              onChange={(e) =>
-                update({
-                  internalSignalLookbackMinutes: Math.min(10080, Math.max(1, Number(e.target.value) || 1)),
-                })
-              }
-              style={{ width: "100%" }}
-              disabled={config.internalSignalMode === "live"}
-            />
-          </Field>
-          <Field id="external-lookback" label="External signals (minutes)" hint="e.g. 10 = last 10 min, 1440 = last 24 hours">
-            <input
-              id="external-lookback"
-              type="number"
-              min={1}
-              max={10080}
-              value={config.externalSignalLookbackMinutes}
-              onChange={(e) =>
-                update({
-                  externalSignalLookbackMinutes: Math.min(10080, Math.max(1, Number(e.target.value) || 1)),
-                })
-              }
-              style={{ width: "100%" }}
-            />
-          </Field>
+              </Field>
+            </div>
+          )}
         </div>
       </section>
 
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <h2 className="text-lg" style={{ margin: 0 }}>When to act</h2>
         <p className="text-sm muted" style={{ margin: 0 }}>
           Only create risk cases and draft plans when these thresholds are met.
@@ -393,7 +508,7 @@ export default function AutonomousAgentClient() {
         </div>
       </section>
 
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <h2 className="text-lg" style={{ margin: 0 }}>When to require human approval</h2>
         <p className="text-sm muted" style={{ margin: 0 }}>
           In full auto mode, require approval before executing when any of these apply.
@@ -462,7 +577,7 @@ export default function AutonomousAgentClient() {
         </div>
       </section>
 
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <h2 className="text-lg" style={{ margin: 0 }}>Execution limits</h2>
         <p className="text-sm muted" style={{ margin: 0 }}>
           Max plans to auto-execute per day (0 = no auto-execution).
@@ -486,7 +601,7 @@ export default function AutonomousAgentClient() {
         </div>
       </section>
 
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <h2 className="text-lg" style={{ margin: 0 }}>Action types allowed for auto-execute</h2>
         <p className="text-sm muted" style={{ margin: 0 }}>
           Only these action types can run without approval.
@@ -509,7 +624,7 @@ export default function AutonomousAgentClient() {
         </div>
       </section>
 
-      <div className="row gap-xs">
+      <div className="row gap-xs" data-animate-section>
         <button type="button" onClick={save} disabled={saving} className="btn primary">
           {saving ? "Saving…" : "Save settings"}
         </button>
@@ -522,6 +637,6 @@ export default function AutonomousAgentClient() {
           {running ? "Running…" : "Run now"}
         </button>
       </div>
-    </div>
+    </AnimeStagger>
   );
 }

@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import type { MitigationPlan } from "@prisma/client";
 import { db } from "@/lib/db";
+import { getGoogleEmailConnectionStatus } from "@/server/email/google";
 import { BackboardClient } from "../memory/backboard-client";
 import { listZapierMCPTools } from "../zapier/mcp-client";
 import { getZapierMCPConfigForCompany, getZapierMCPToolSelections } from "../zapier/mcp-config";
@@ -81,6 +82,7 @@ export type MitigationPlanOutput = {
 
 export type GenerateMitigationPlanOptions = {
   createdByAutonomousAgent?: boolean;
+  executionModeOverride?: MitigationPlanOutput["executionMode"];
 };
 
 export async function generateMitigationPlan(
@@ -110,9 +112,10 @@ export async function generateMitigationPlan(
         throw new Error("Missing required entities for mitigation planning.");
     }
 
-    const [zapierMCPConfig, toolSelections] = await Promise.all([
+    const [zapierMCPConfig, toolSelections, gmailStatus] = await Promise.all([
         getZapierMCPConfigForCompany(companyId),
         getZapierMCPToolSelections(companyId),
+        getGoogleEmailConnectionStatus(companyId),
     ]);
     const allMcpTools: { name: string; description?: string }[] = zapierMCPConfig
         ? await listZapierMCPTools(zapierMCPConfig).catch(() => [])
@@ -124,14 +127,15 @@ export async function generateMitigationPlan(
         const n = t.name.toLowerCase();
         return (n.includes("send") && (n.includes("email") || n.includes("gmail"))) || (n.includes("gmail") && n.includes("send"));
     });
+    const hasDirectEmail = gmailStatus.connected && gmailStatus.sendReady;
     const hasExecutionTools = mcpToolsForActions.length > 0;
 
     const actionTypesList: string[] = [
         "insight (text-only: observation or recommendation for the operator; recipientOrEndpoint can be empty; payloadOrBody = the insight text; use for 1-2 key takeaways or suggested considerations)",
         "recommendation (text-only: suggested next step or best practice; payloadOrBody = the recommendation; use when you want to advise without executing)",
     ];
-    if (hasSendEmailTool) {
-        actionTypesList.push("email (recipientOrEndpoint = address; payloadOrBody = body; will be sent via your enabled send-email tool)");
+    if (hasSendEmailTool || hasDirectEmail) {
+        actionTypesList.push(`email (recipientOrEndpoint = address; payloadOrBody = body; will be sent via ${hasDirectEmail ? "the direct Gmail connection" : "your enabled send-email tool"})`);
     }
     if (hasExecutionTools) {
         actionTypesList.push(`zapier_mcp (ONLY use tools from the list below; payloadOrBody = JSON: {"toolName":"<exact_tool_name_from_list>","arguments":{...}}; allowed tool names: ${mcpToolsForActions.map((t) => t.name).join(", ")})`);
@@ -140,8 +144,8 @@ export async function generateMitigationPlan(
     const actionTypesDesc = actionTypesList.join(", ");
 
     const executionToolsBlock =
-        hasExecutionTools
-            ? `\n## Execution tools (ONLY use these for zapier_mcp or email—do NOT suggest any action that is not in this list)\n${mcpToolsForActions.map((t) => `- ${t.name}${t.description ? `: ${t.description}` : ""}`).join("\n")}\n`
+        hasExecutionTools || hasDirectEmail
+            ? `\n## Execution tools\n${hasDirectEmail ? "- Direct Gmail connection: available for email actions\n" : ""}${mcpToolsForActions.map((t) => `- ${t.name}${t.description ? `: ${t.description}` : ""}`).join("\n")}\n\nUse email actions when direct Gmail is available or when a send-email execution tool exists. Use zapier_mcp only for the explicit tools listed above.\n`
             : "\n## Execution tools: None enabled. Do NOT suggest sending email, Slack, CRM, or any other execution action. Only suggest \"insight\" and \"recommendation\" steps.\n";
     const inputContextNote =
         toolSelections.inputContextTools.length > 0
@@ -171,8 +175,8 @@ export async function generateMitigationPlan(
     Risk Reduction: ${scenario.riskReduction}
     
     ## Your Task
-    ${hasExecutionTools
-        ? "Using ONLY the execution tools listed above, produce a well-rounded execution plan. Include 1-3 \"insight\" or \"recommendation\" steps, then concrete executable actions that use ONLY tools from that list (e.g. if Gmail: Send Email is in the list, you may suggest sending an email; if Slack is in the list, you may suggest posting). Do NOT suggest any action (email, Slack, CRM, etc.) whose tool is not in the list."
+    ${(hasExecutionTools || hasDirectEmail)
+        ? "Using ONLY the execution options listed above, produce a well-rounded execution plan. Include 1-3 \"insight\" or \"recommendation\" steps, then concrete executable actions that use ONLY those options (e.g. if direct Gmail is available, you may suggest sending an email; if Slack is in the list, you may suggest posting). Do NOT suggest any action (email, Slack, CRM, etc.) whose delivery path is not available."
         : "You have no execution tools enabled. Produce a plan with ONLY \"insight\" and \"recommendation\" steps. Do NOT suggest sending email, posting to Slack, or any other execution action—only observations and recommendations for the operator."}
     Possible action types: ${actionTypesDesc}
     
@@ -180,12 +184,12 @@ export async function generateMitigationPlan(
     For each action include a "stepTitle" (short human-readable step name).
     Return your output strictly as JSON. No markdown wrapping.
     Output Form (only include action types that are allowed above; if no execution tools, only use insight and recommendation):
-    ${hasExecutionTools
+    ${(hasExecutionTools || hasDirectEmail)
         ? `{
       "actions": [
         { "type": "insight", "recipientOrEndpoint": "", "payloadOrBody": "Consider contacting backup suppliers given the 3-month delay.", "requiresHumanApproval": false, "stepTitle": "Key consideration" },
         { "type": "recommendation", "recipientOrEndpoint": "", "payloadOrBody": "Escalate to procurement lead within 24h.", "requiresHumanApproval": false, "stepTitle": "Next step" }
-        ${hasSendEmailTool ? ', { "type": "email", "recipientOrEndpoint": "supplier@example.com", "payloadOrBody": "Dear Supplier...", "requiresHumanApproval": true, "stepTitle": "Notify primary supplier" }' : ""}
+        ${(hasSendEmailTool || hasDirectEmail) ? ', { "type": "email", "recipientOrEndpoint": "supplier@example.com", "payloadOrBody": "Dear Supplier...", "requiresHumanApproval": true, "stepTitle": "Notify primary supplier" }' : ""}
         ${hasExecutionTools ? ', { "type": "zapier_mcp", "recipientOrEndpoint": "", "payloadOrBody": "{\\"toolName\\":\\"<exact_name_from_list>\\",\\"arguments\\":{...}}", "requiresHumanApproval": true, "stepTitle": "..." }' : ""}
       ],
       "executionMode": "human_in_loop",
@@ -194,7 +198,7 @@ export async function generateMitigationPlan(
         : `{
       "actions": [
         { "type": "insight", "recipientOrEndpoint": "", "payloadOrBody": "Consider contacting backup suppliers given the 3-month delay.", "requiresHumanApproval": false, "stepTitle": "Key consideration" },
-        { "type": "recommendation", "recipientOrEndpoint": "", "payloadOrBody": "Add an execution tool (e.g. Gmail: Send Email) in Integrations to enable sending emails from plans.", "requiresHumanApproval": false, "stepTitle": "Enable integrations" }
+        { "type": "recommendation", "recipientOrEndpoint": "", "payloadOrBody": "Connect direct Gmail or add an execution tool (e.g. Gmail: Send Email) in Integrations to enable sending emails from plans.", "requiresHumanApproval": false, "stepTitle": "Enable integrations" }
       ],
       "executionMode": "human_in_loop",
       "summary": "Insights and recommendations only; no execution tools enabled."
@@ -211,6 +215,7 @@ export async function generateMitigationPlan(
 
     if (!response.text) throw new Error("No response from generating mitigation plan");
     const output = parseMitigationPlanResponse(response.text);
+    const executionMode = options?.executionModeOverride ?? output.executionMode;
 
     // Save the Mitigation Plan to Prisma
     const plan = await db.mitigationPlan.create({
@@ -220,7 +225,7 @@ export async function generateMitigationPlan(
             scenarioId,
             status: "DRAFTED",
             actions: output.actions as any,
-            executionMode: output.executionMode,
+            executionMode,
             createdByAutonomousAgent: options?.createdByAutonomousAgent ?? false,
         }
     });
@@ -234,7 +239,7 @@ export async function generateMitigationPlan(
             action: "Mitigation Plan Generated",
             scenarioChosen: scenario.name,
             draftedActions: output.actions,
-            status: "Awaiting Human Approval"
+            status: executionMode === "autonomous" ? "Queued for Autonomous Execution" : "Awaiting Human Approval"
         });
     }
 

@@ -588,6 +588,81 @@ textarea {
 .badge.warning { background: var(--warning-soft); color: var(--warning); }
 .badge.accent  { background: var(--accent-soft);  color: var(--accent-text); }
 
+/* ── Status banner ─────────────────────────────────── */
+.status-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+.status-banner--compact {
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+}
+.status-banner__dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  margin-top: 0.32rem;
+  flex-shrink: 0;
+  background: var(--muted);
+}
+.status-banner__content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.status-banner__title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.status-banner__message {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: inherit;
+  opacity: 0.92;
+}
+.status-banner--info {
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 70%, white);
+  color: var(--accent-text);
+}
+.status-banner--info .status-banner__dot {
+  background: var(--accent);
+}
+.status-banner--success {
+  border-color: color-mix(in srgb, var(--success) 22%, var(--border));
+  background: color-mix(in srgb, var(--success-soft) 78%, white);
+  color: var(--success);
+}
+.status-banner--success .status-banner__dot {
+  background: var(--success);
+}
+.status-banner--error {
+  border-color: color-mix(in srgb, var(--danger) 22%, var(--border));
+  background: color-mix(in srgb, var(--danger-soft) 82%, white);
+  color: var(--danger);
+}
+.status-banner--error .status-banner__dot {
+  background: var(--danger);
+}
+.status-banner--warning {
+  border-color: color-mix(in srgb, var(--warning) 22%, var(--border));
+  background: color-mix(in srgb, var(--warning-soft) 80%, white);
+  color: var(--warning);
+}
+.status-banner--warning .status-banner__dot {
+  background: var(--warning);
+}
+
 /* ── Divider ──────────────────────────────────────── */
 .divider {
   height: 1px;

@@ -1,4 +1,5 @@
 import { AppHeader } from "@/components/AppHeader";
+import { AnimeStagger } from "@/components/AnimeStagger";
 import { DeleteAccountSection } from "@/components/DeleteAccountSection";
 import { getSession } from "@/lib/auth";
 import { getCompanySetupSnapshot } from "@/server/company-setup";
@@ -28,13 +29,15 @@ export default async function ProfileDashboardPage() {
   const snapshot = await getCompanySetupSnapshot(session.companyId);
 
   return (
-    <div className="stack-xl" style={{ maxWidth: 1100 }}>
-      <AppHeader
-        title="Company profile"
-        actions={<Link href="/setup/review" className="btn secondary btn-sm">Edit setup sections</Link>}
-      />
+    <AnimeStagger className="stack-xl" style={{ maxWidth: 1100 }} itemSelector="[data-animate-section]" delayStep={85}>
+      <div data-animate-section>
+        <AppHeader
+          title="Company profile"
+          actions={<Link href="/setup/review" className="btn secondary btn-sm">Edit setup sections</Link>}
+        />
+      </div>
 
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
           <h3 style={{ margin: 0 }}>Base Attributes</h3>
           <Link href="/setup/baselayer" className="btn secondary btn-sm">Edit</Link>
@@ -42,7 +45,7 @@ export default async function ProfileDashboardPage() {
         <DataList data={snapshot.baselayer} />
       </section>
 
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
           <h3 style={{ margin: 0 }}>High-Level Reasoning Graph</h3>
           <Link href="/setup/high-level" className="btn secondary btn-sm">Edit</Link>
@@ -50,7 +53,9 @@ export default async function ProfileDashboardPage() {
         <DataList data={snapshot.highLevel} />
       </section>
 
-      <DeleteAccountSection />
-    </div>
+      <div data-animate-section>
+        <DeleteAccountSection />
+      </div>
+    </AnimeStagger>
   );
 }

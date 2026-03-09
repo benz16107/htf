@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
+import { AnimeStagger } from "@/components/AnimeStagger";
+import { StatusBanner } from "@/components/StatusBanner";
 import { useState, useEffect } from "react";
 
 const profileParts = [
@@ -32,8 +34,10 @@ export default function HighLevelSetupPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState("");
+  const [savedStep, setSavedStep] = useState<string | null>(null);
 
   useEffect(() => {
+    setSavedStep(new URLSearchParams(window.location.search).get("saved"));
     fetch("/api/setup/high-level")
       .then((r) => r.json())
       .then((data) => {
@@ -114,10 +118,21 @@ export default function HighLevelSetupPage() {
   };
 
   return (
-    <main className="container stack-xl">
-      <AppHeader title="High-level profile" subtitle="Step 3 of 4" />
+    <AnimeStagger className="container stack-xl" itemSelector="[data-animate-section]" delayStep={85}>
+      <div data-animate-section>
+        <AppHeader title="High-level profile" subtitle="Step 3 of 4" />
+      </div>
+      {savedStep === "integrations" ? (
+        <div data-animate-section>
+          <StatusBanner
+            variant="success"
+            title="Integrations saved"
+            message="Tool assignments are ready. Finish the high-level profile to complete setup."
+          />
+        </div>
+      ) : null}
 
-      <section className="card stack-lg">
+      <section className="card stack-lg" data-animate-section>
         {!isStarted && (
           <div className="empty-state pad-lg">
             <h3>Ready to build your profile?</h3>
@@ -235,6 +250,27 @@ export default function HighLevelSetupPage() {
             })}
 
             {error && <p className="text-sm text-danger">{error}</p>}
+            {saveStatus === "saving" ? (
+              <StatusBanner
+                variant="info"
+                title="Saving high-level profile"
+                message="Your edits are being stored so you can continue without losing progress."
+              />
+            ) : null}
+            {saveStatus === "saved" ? (
+              <StatusBanner
+                variant="success"
+                title="High-level profile saved"
+                message="Your latest edits are saved."
+              />
+            ) : null}
+            {saveStatus === "error" ? (
+              <StatusBanner
+                variant="error"
+                title="Could not save profile"
+                message="Please try again."
+              />
+            ) : null}
 
             <div className="row gap-xs">
               <button
@@ -245,8 +281,6 @@ export default function HighLevelSetupPage() {
               >
                 {saveStatus === "saving" ? "Saving…" : "Save"}
               </button>
-              {saveStatus === "saved" && <span className="text-sm text-success">Saved</span>}
-              {saveStatus === "error" && <span className="text-sm text-danger">Save failed</span>}
               <button className="btn primary" type="submit" disabled={(Object.keys(sections).length === 0 && !error) || isSubmitting}>
                 {isSubmitting ? "Saving…" : "Confirm & next"}
               </button>
@@ -268,6 +302,6 @@ export default function HighLevelSetupPage() {
           </form>
         )}
       </section>
-    </main>
+    </AnimeStagger>
   );
 }

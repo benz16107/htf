@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { AnimeStagger } from "@/components/AnimeStagger";
+import { DirectEmailConnectionCard } from "@/components/DirectEmailConnectionCard";
+import { StatusBanner } from "@/components/StatusBanner";
 import { SuggestedIntegrationsBox } from "@/components/SuggestedIntegrationsBox";
 import { ZapierMcpEmbed } from "@/components/ZapierMcpEmbed";
 import { getSuggestedZoneForTool, getSuggestedZoneLabel, groupToolsByApp } from "@/lib/integration-tool-hint";
@@ -23,10 +26,12 @@ export default function IntegrationsClient({
   const [execution, setExecution] = useState<Set<string>>(new Set(initialExecutionTools));
   const [isLocalhost, setIsLocalhost] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [savedStep, setSavedStep] = useState<string | null>(null);
 
   useEffect(() => {
     const h = window.location.hostname;
     setIsLocalhost(h === "localhost" || h === "127.0.0.1");
+    setSavedStep(new URLSearchParams(window.location.search).get("saved"));
   }, []);
 
   const fetchMcpTools = useCallback(async () => {
@@ -66,17 +71,32 @@ export default function IntegrationsClient({
   const embedId = process.env.NEXT_PUBLIC_ZAPIER_MCP_EMBED_ID as string;
 
   return (
-    <div className="stack-lg">
-      <SuggestedIntegrationsBox
-        mcpTools={mcpTools}
-        onApply={({ inputContextTools, executionTools }) => {
-          setInputContext((prev) => new Set([...prev, ...inputContextTools]));
-          setExecution((prev) => new Set([...prev, ...executionTools]));
-        }}
-      />
+    <AnimeStagger className="stack-lg" itemSelector="[data-animate-section]" delayStep={85}>
+      {savedStep === "baselayer" ? (
+        <div data-animate-section>
+          <StatusBanner
+            variant="success"
+            title="Base profile saved"
+            message="Your company profile is ready. Next, choose which integrations the agent can read from and act through."
+          />
+        </div>
+      ) : null}
+      <div data-animate-section>
+        <SuggestedIntegrationsBox
+          mcpTools={mcpTools}
+          onApply={({ inputContextTools, executionTools }) => {
+            setInputContext((prev) => new Set([...prev, ...inputContextTools]));
+            setExecution((prev) => new Set([...prev, ...executionTools]));
+          }}
+        />
+      </div>
+
+      <div data-animate-section>
+        <DirectEmailConnectionCard />
+      </div>
 
       {embedId && (
-        <section className="card stack">
+        <section className="card stack" data-animate-section>
           <h3>Connect Zapier (MCP)</h3>
           {isLocalhost ? (
             <div className="card-flat stack-sm text-sm">
@@ -108,7 +128,7 @@ export default function IntegrationsClient({
         </section>
       )}
 
-      <section className="integrations-zones">
+      <section className="integrations-zones" data-animate-section>
         <h3 className="integrations-zones__title">Assign tools to roles</h3>
         <p className="muted text-sm integrations-zones__subtitle">
           Choose which tools the agent uses for gathering context vs. taking action. Selections in each zone are independent.
@@ -302,6 +322,13 @@ export default function IntegrationsClient({
           {Array.from(execution).map((c) => (
             <input key={`ex-${c}`} type="hidden" name="executionTools" value={c} />
           ))}
+          {isSubmitting ? (
+            <StatusBanner
+              variant="info"
+              title="Saving integrations"
+              message="Your tool selections are being stored before the next step opens."
+            />
+          ) : null}
           <div className="row" style={{ marginTop: "0.5rem", flexWrap: "wrap", gap: "0.5rem" }}>
             <button type="submit" className="btn primary" disabled={isSubmitting}>
               {isSubmitting ? "Saving…" : "Confirm & next"}
@@ -323,6 +350,6 @@ export default function IntegrationsClient({
           </div>
         </form>
       </section>
-    </div>
+    </AnimeStagger>
   );
 }

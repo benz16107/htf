@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { AppHeader } from "@/components/AppHeader";
+import { AnimeStagger } from "@/components/AnimeStagger";
 import { getZapierMCPToolSelections } from "@/server/zapier/mcp-config";
 import IntegrationsClient from "./IntegrationsClient";
 
@@ -11,13 +12,17 @@ export default async function SetupIntegrationsPage() {
   const { inputContextTools, executionTools } = await getZapierMCPToolSelections(session.companyId);
 
   return (
-    <main className="container-wide stack-xl">
-      <AppHeader title="Integrations" subtitle="Step 2 of 4" />
-      <IntegrationsClient
-        initialInputContextTools={inputContextTools}
-        initialExecutionTools={executionTools}
-        userEmail={session.email}
-      />
-    </main>
+    <AnimeStagger className="container-wide stack-xl" itemSelector="[data-animate-section]" delayStep={85}>
+      <div data-animate-section>
+        <AppHeader title="Integrations" subtitle="Step 2 of 4" />
+      </div>
+      <div data-animate-section>
+        <IntegrationsClient
+          initialInputContextTools={inputContextTools}
+          initialExecutionTools={executionTools}
+          userEmail={session.email}
+        />
+      </div>
+    </AnimeStagger>
   );
 }

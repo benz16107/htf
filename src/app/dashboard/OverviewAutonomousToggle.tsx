@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { AnimatedSwitch } from "@/components/AnimatedSwitch";
+import { StatusBanner } from "@/components/StatusBanner";
 
 type Props = {
   initialLevel: string;
@@ -10,11 +12,21 @@ type Props = {
 export function OverviewAutonomousToggle({ initialLevel }: Props) {
   const [fullAuto, setFullAuto] = useState(initialLevel === "full_auto");
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<{
+    variant: "success" | "error";
+    title: string;
+    message?: string;
+  } | null>(null);
 
   useEffect(() => {
     setFullAuto(initialLevel === "full_auto");
   }, [initialLevel]);
+
+  useEffect(() => {
+    if (!status || status.variant === "error") return;
+    const timeout = window.setTimeout(() => setStatus(null), 2200);
+    return () => window.clearTimeout(timeout);
+  }, [status]);
 
   const toggle = async () => {
     if (saving) return;
@@ -32,8 +44,20 @@ export function OverviewAutonomousToggle({ initialLevel }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to update");
       setFullAuto(nextLevel === "full_auto");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("autonomous-config-change"));
+      }
+      setStatus({
+        variant: "success",
+        title: nextLevel === "full_auto" ? "Full auto enabled" : "Autonomous mode turned off",
+        message: nextLevel === "full_auto" ? "The agent can assess, draft, and execute automatically." : "The agent will stop autonomous execution until you turn it back on.",
+      });
     } catch {
-      // keep current state
+      setStatus({
+        variant: "error",
+        title: "Could not update autonomy",
+        message: "Please try again.",
+      });
     } finally {
       setSaving(false);
     }
@@ -47,39 +71,15 @@ export function OverviewAutonomousToggle({ initialLevel }: Props) {
     >
       <span className="overview-metric__label">Autonomous agent</span>
       <div className="row" style={{ alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={fullAuto}
+        <AnimatedSwitch
+          checked={fullAuto}
           disabled={saving}
           onClick={toggle}
-          title={fullAuto ? "Full auto — click to turn off" : "Off — click for Full auto"}
-          style={{
-            width: 56,
-            height: 30,
-            borderRadius: 15,
-            border: "2px solid var(--border)",
-            background: fullAuto ? "var(--accent)" : "var(--surface-soft)",
-            cursor: saving ? "not-allowed" : "pointer",
-            position: "relative",
-            flexShrink: 0,
-            transition: "background 0.2s, border-color 0.2s",
-          }}
-        >
-          <span
-            style={{
-              position: "absolute",
-              top: 2,
-              left: fullAuto ? 26 : 2,
-              width: 22,
-              height: 22,
-              borderRadius: "50%",
-              background: "white",
-              boxShadow: "var(--shadow-sm)",
-              transition: "left 0.2s ease",
-            }}
-          />
-        </button>
+          title={fullAuto ? "Full auto - click to turn off" : "Off - click for Full auto"}
+          onColor="var(--accent)"
+          offColor="var(--surface-soft)"
+          className={fullAuto ? "agent-toggle--on" : undefined}
+        />
         <span
           className="overview-metric__value overview-metric__value--text"
           data-status={fullAuto ? "pending" : "neutral"}
@@ -91,6 +91,7 @@ export function OverviewAutonomousToggle({ initialLevel }: Props) {
       <span className="overview-metric__note">
         {fullAuto ? "Agent can assess, draft, and execute" : "Turn on for autonomous runs"}
       </span>
+      {status ? <StatusBanner compact variant={status.variant} title={status.title} message={status.message} /> : null}
       <Link href="/dashboard/autonomous" className="text-xs link-accent" style={{ marginTop: "auto" }}>
         Settings →
       </Link>

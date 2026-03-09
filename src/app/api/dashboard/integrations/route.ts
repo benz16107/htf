@@ -6,8 +6,12 @@ import { saveZapierMCPToolSelections } from "@/server/zapier/mcp-config";
 export async function POST(request: Request) {
   const session = await getSession();
   const origin = getRequestOrigin(request);
+  const wantsJson = request.headers.get("accept")?.includes("application/json");
 
   if (!session?.companyId) {
+    if (wantsJson) {
+      return NextResponse.json({ success: false, error: "Not signed in." }, { status: 401 });
+    }
     return NextResponse.redirect(new URL("/dashboard", origin));
   }
 
@@ -25,6 +29,10 @@ export async function POST(request: Request) {
     inputContextTools,
     executionTools,
   });
+
+  if (wantsJson) {
+    return NextResponse.json({ success: true });
+  }
 
   return NextResponse.redirect(new URL("/dashboard/integrations", origin));
 }

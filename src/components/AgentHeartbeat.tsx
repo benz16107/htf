@@ -59,6 +59,11 @@ export function AgentHeartbeat() {
       }
     };
     window.addEventListener("agent-running-change", handleChange);
+    const handleAutonomousConfigChange = () => {
+      // Force next tick to request a fresh continuous run after settings changes.
+      runIdRef.current = null;
+    };
+    window.addEventListener("autonomous-config-change", handleAutonomousConfigChange);
 
     return () => {
       if (intervalRef.current) {
@@ -66,6 +71,7 @@ export function AgentHeartbeat() {
         intervalRef.current = null;
       }
       window.removeEventListener("agent-running-change", handleChange);
+      window.removeEventListener("autonomous-config-change", handleAutonomousConfigChange);
     };
   }, []);
 

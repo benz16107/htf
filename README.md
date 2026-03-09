@@ -1,4 +1,4 @@
-# HTF 2.0 Intelligence Dashboard
+# Pentagon
 
 Multi-tenant supply chain risk platform with:
 
@@ -9,7 +9,7 @@ Multi-tenant supply chain risk platform with:
 
 ## Design
 
-Token-based design system in `src/app/globals.css`. A Pencil design kit is in **`designs/htf-design-kit.pen`**—open it in the [Pencil extension](https://pencil.dev) to edit variables and designs. See `DESIGN_SYSTEM.md` for token reference and sync notes.
+Token-based design system in `src/app/globals.css`. A Pencil design kit is in **`designs/htf-design-kit.pen`** (Pentagon)—open it in the [Pencil extension](https://pencil.dev) to edit variables and designs. See `DESIGN_SYSTEM.md` for token reference and sync notes.
 
 ## Stack
 
@@ -36,13 +36,29 @@ Token-based design system in `src/app/globals.css`. A Pencil design kit is in **
    Use **Zapier via Webhooks**: in Zapier create a Zap with trigger **Webhooks by Zapier → Catch Hook**, add your action (e.g. Gmail, Slack), then in the app paste the webhook URL under Setup → Integrations (or Dashboard → Integrations). The AI can then trigger that Zap by name when running mitigation actions. No OAuth or publishing.  
    Optional: set `ZAPIER_ACCESS_TOKEN` in `.env` (from one-time OAuth once your app is published) to list Zapier apps and choose connector labels for the company profile.
 
-4. Generate Prisma client:
+4. **Direct Gmail email sync (optional)**  
+   To connect Gmail directly for internal email signals, set:
+   - `GOOGLE_CLIENT_ID`
+   - `GOOGLE_CLIENT_SECRET`
+   - `GOOGLE_REDIRECT_URI` (optional; if omitted the app uses `<origin>/api/email/google/callback`)
+   - `GOOGLE_PUBSUB_TOPIC_NAME` (required for Gmail push/watch)
+   - `GOOGLE_PUBSUB_VERIFICATION_TOKEN` (shared secret appended to the push endpoint URL)
+   
+   In Google Cloud, enable the Gmail API and add your callback URI to the OAuth client’s authorized redirect URIs.
+   For true live inbox sync, also:
+   - create a Pub/Sub topic that matches `GOOGLE_PUBSUB_TOPIC_NAME`
+   - create a Pub/Sub push subscription pointing to the app’s Gmail push endpoint shown in Integrations
+   - after connecting Gmail in the app, click `Enable Gmail push`
+   
+   The app stores the Gmail `historyId`, receives Pub/Sub push notifications, ingests new inbox emails as internal signals, and renews Gmail watches from the existing cron route.
+
+5. Generate Prisma client:
 
 	```bash
 	npm run prisma:generate
 	```
 
-5. Start app:
+6. Start app:
 
 	```bash
 	npm run dev

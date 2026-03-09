@@ -22,6 +22,13 @@ const DEFAULTS = {
   requireApprovalForFirstNPerDay: 0,
 };
 
+function normalizeSignalSources(value: string | null | undefined): "internal_only" | "external_only" | "both" {
+  const v = (value ?? "").toLowerCase().trim().replace(/\s+/g, "_");
+  if (v === "internal_only" || v === "internal") return "internal_only";
+  if (v === "external_only" || v === "external") return "external_only";
+  return "both";
+}
+
 export type AutonomousConfigPayload = typeof DEFAULTS;
 
 /** GET /api/settings/autonomous — returns current company's autonomous agent config. */
@@ -64,7 +71,7 @@ export async function GET() {
         companyId: config.companyId,
         agentRunning: config.agentRunning ?? false,
         automationLevel: config.automationLevel,
-        signalSources: config.signalSources,
+        signalSources: normalizeSignalSources(config.signalSources),
         internalSignalMode: (config as { internalSignalMode?: string }).internalSignalMode ?? DEFAULTS.internalSignalMode,
         internalSignalLookbackMinutes: config.internalSignalLookbackMinutes ?? DEFAULTS.internalSignalLookbackMinutes,
         externalSignalLookbackMinutes: config.externalSignalLookbackMinutes ?? DEFAULTS.externalSignalLookbackMinutes,
@@ -253,7 +260,7 @@ export async function PATCH(req: Request) {
         companyId: config.companyId,
         agentRunning: config.agentRunning ?? false,
         automationLevel: config.automationLevel,
-        signalSources: config.signalSources,
+        signalSources: normalizeSignalSources(config.signalSources),
         internalSignalMode: (config as { internalSignalMode?: string }).internalSignalMode ?? DEFAULTS.internalSignalMode,
         internalSignalLookbackMinutes: config.internalSignalLookbackMinutes ?? DEFAULTS.internalSignalLookbackMinutes,
         externalSignalLookbackMinutes: config.externalSignalLookbackMinutes ?? DEFAULTS.externalSignalLookbackMinutes,

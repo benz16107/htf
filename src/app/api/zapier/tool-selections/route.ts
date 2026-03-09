@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getZapierMCPToolSelections } from "@/server/zapier/mcp-config";
+import { getGoogleEmailConnectionStatus } from "@/server/email/google";
 
 /**
  * GET /api/zapier/tool-selections
@@ -12,6 +13,14 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { inputContextTools, executionTools } = await getZapierMCPToolSelections(session.companyId);
-  return NextResponse.json({ inputContextTools, executionTools });
+  const [{ inputContextTools, executionTools }, emailStatus] = await Promise.all([
+    getZapierMCPToolSelections(session.companyId),
+    getGoogleEmailConnectionStatus(session.companyId),
+  ]);
+
+  return NextResponse.json({
+    inputContextTools,
+    executionTools,
+    directEmailConnected: emailStatus.connected,
+  });
 }

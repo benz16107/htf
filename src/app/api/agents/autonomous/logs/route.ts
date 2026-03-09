@@ -4,6 +4,13 @@ import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
+function normalizeSignalSources(value: string | null | undefined): "internal_only" | "external_only" | "both" {
+  const v = (value ?? "").toLowerCase().trim().replace(/\s+/g, "_");
+  if (v === "internal_only" || v === "internal") return "internal_only";
+  if (v === "external_only" || v === "external") return "external_only";
+  return "both";
+}
+
 type LogEntrySerialized = {
   id: string;
   runId: string;
@@ -86,16 +93,34 @@ export async function GET() {
       // autonomousAgentLog may be missing if Prisma client is stale
     }
 
+    // Respect current source preference in logs view too.
+    // This prevents stale historical entries from the opposite source appearing
+    // when the user has selected internal-only or external-only mode.
+    try {
+      const config = await db.autonomousAgentConfig.findUnique({
+        where: { companyId: session.companyId },
+        select: { signalSources: true },
+      });
+      const mode = normalizeSignalSources(config?.signalSources);
+      if (mode === "internal_only") {
+        logs = logs.filter((l) => l.signalType !== "external");
+      } else if (mode === "external_only") {
+        logs = logs.filter((l) => l.signalType !== "internal");
+      }
+    } catch {
+      // If config lookup fails, fall back to unfiltered logs.
+    }
+
     const companyId = session.companyId;
     const internalSignalIds = [...new Set(logs.filter((l) => l.signalType === "internal" && l.signalId).map((l) => l.signalId!))];
     const externalSignalIds = [...new Set(logs.filter((l) => l.signalType === "external" && l.signalId).map((l) => l.signalId!))];
     const riskCaseIds = [...new Set(logs.filter((l) => l.riskCaseId).map((l) => l.riskCaseId!))];
     const planIds = [...new Set(logs.filter((l) => l.planId).map((l) => l.planId!))];
 
-    let internalSignals: Map<string, { source: string; toolName: string; signalSummary: string | null; rawContent: unknown }> = new Map();
-    let externalSignals: Map<string, { title: string; snippet: string; url: string | null; source: string | null }> = new Map();
-    let riskCases: Map<string, LogEntrySerialized["riskCase"]> = new Map();
-    let plans: Map<string, LogEntrySerialized["plan"]> = new Map();
+    const internalSignals: Map<string, { source: string; toolName: string; signalSummary: string | null; rawContent: unknown }> = new Map();
+    const externalSignals: Map<string, { title: string; snippet: string; url: string | null; source: string | null }> = new Map();
+    const riskCases: Map<string, LogEntrySerialized["riskCase"]> = new Map();
+    const plans: Map<string, LogEntrySerialized["plan"]> = new Map();
 
     try {
       if (internalSignalIds.length > 0) {
@@ -192,7 +217,7 @@ export async function GET() {
   }
 }
 
-/** DELETE /api/agents/autonomous/logs?runId=xxx — deletes all log entries for that run (clears run from history). */
+/** DELETE /api/agents/autonomous/logs?runId=xxx|all=true — clears one run or all run history for the company. */
 export async function DELETE(request: Request) {
   try {
     const session = await getSession();
@@ -202,18 +227,21 @@ export async function DELETE(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const runId = searchParams.get("runId");
-    if (!runId || !runId.trim()) {
-      return NextResponse.json({ error: "Missing runId" }, { status: 400 });
+    const deleteAll = searchParams.get("all") === "true";
+    if (!deleteAll && (!runId || !runId.trim())) {
+      return NextResponse.json({ error: "Missing runId or all=true" }, { status: 400 });
     }
 
     const result = await db.autonomousAgentLog.deleteMany({
-      where: {
-        companyId: session.companyId,
-        runId: runId.trim(),
-      },
+      where: deleteAll
+        ? { companyId: session.companyId }
+        : {
+            companyId: session.companyId,
+            runId: runId!.trim(),
+          },
     });
 
-    return NextResponse.json({ success: true, deleted: result.count });
+    return NextResponse.json({ success: true, deleted: result.count, scope: deleteAll ? "all" : "run" });
   } catch (err) {
     console.error("DELETE /api/agents/autonomous/logs error:", err);
     return NextResponse.json(

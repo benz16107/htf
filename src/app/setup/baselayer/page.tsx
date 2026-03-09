@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import { useState, useEffect } from "react";
+import { AnimeStagger } from "@/components/AnimeStagger";
+import { StatusBanner } from "@/components/StatusBanner";
 
 export default function BaselayerSetupPage() {
   const [isGenerating, setIsGenerating] = useState(false);
@@ -64,10 +66,12 @@ export default function BaselayerSetupPage() {
   };
 
   return (
-    <main className="container stack-xl">
-      <AppHeader title="Base profile" subtitle="Step 1 of 4" />
+    <AnimeStagger className="container stack-xl" itemSelector="[data-animate-section]" delayStep={85}>
+      <div data-animate-section>
+        <AppHeader title="Base profile" subtitle="Step 1 of 4" />
+      </div>
 
-      <section className="card stack-lg">
+      <section className="card stack-lg" data-animate-section>
         <div className="stack">
           <label className="field">
             Company legal name
@@ -106,6 +110,14 @@ export default function BaselayerSetupPage() {
             <textarea name="supplyChainSummary" required placeholder="Brief supply chain summary" value={formData.supplyChainSummary} onChange={handleChange} rows={5} />
           </label>
 
+          {isSubmitting ? (
+            <StatusBanner
+              variant="info"
+              title="Saving base profile"
+              message="We are storing your company profile and preparing the next setup step."
+            />
+          ) : null}
+
           <div className="row gap-xs">
             <button className="btn primary" type="submit" disabled={isSubmitting}>
               {isSubmitting ? "Setting up…" : "Confirm & next"}
@@ -127,6 +139,6 @@ export default function BaselayerSetupPage() {
           </div>
         </form>
       </section>
-    </main>
+    </AnimeStagger>
   );
 }

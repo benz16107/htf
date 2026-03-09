@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { AnimeStagger } from "@/components/AnimeStagger";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { ExternalSignalSection } from "./ExternalSignalSection";
 import { InternalSignalSection } from "./InternalSignalSection";
@@ -17,7 +18,11 @@ type ArchiveConfirmState = null | "clear-all" | { type: "delete-item"; id: strin
 const STORAGE_KEY = "htf-risk-assessment-outputs";
 const SELECTED_SIGNALS_KEY = "htf-risk-selected-signals";
 
-export function TriggeredRiskClient() {
+export function TriggeredRiskClient({
+  signalSources = "both",
+}: {
+  signalSources?: "internal_only" | "external_only" | "both";
+}) {
   const router = useRouter();
   const [selectedSignals, setSelectedSignals] = useState<SelectedSignal[]>([]);
   const [outputs, setOutputs] = useState<AssessmentOutput[]>([]);
@@ -317,7 +322,7 @@ export function TriggeredRiskClient() {
         : "";
 
   return (
-    <div className="stack-lg">
+    <AnimeStagger className="stack-lg" itemSelector="[data-animate-section]" delayStep={90}>
       <ConfirmModal
         open={archiveConfirmOpen}
         title={archiveConfirmTitle}
@@ -329,28 +334,42 @@ export function TriggeredRiskClient() {
         onCancel={() => setArchiveConfirm(null)}
       />
       <div className="risk-signals-and-assessment">
-        <div className="stack-lg">
-          <ExternalSignalSection onAddToAssessment={addToAssessment} />
-          <InternalSignalSection onAddToAssessment={addToAssessment} />
+        <AnimeStagger className="stack-lg" playKey={`${signalSources}-${selectedSignals.length}-${outputs.length}`}>
+          <div data-animate-item>
+            <ExternalSignalSection onAddToAssessment={addToAssessment} />
+          </div>
+          {(signalSources === "internal_only" || signalSources === "both") && (
+            <div data-animate-item>
+              <InternalSignalSection onAddToAssessment={addToAssessment} />
+            </div>
+          )}
+        </AnimeStagger>
+        <div data-animate-item>
+          <RiskAssessmentSection
+            selectedSignals={selectedSignals}
+            onRemoveSignal={removeFromAssessment}
+            onOutput={addOutput}
+          />
         </div>
-        <RiskAssessmentSection
-          selectedSignals={selectedSignals}
-          onRemoveSignal={removeFromAssessment}
-          onOutput={addOutput}
+      </div>
+      <div data-animate-section>
+        <AssessmentOutputsSection
+          outputs={outputs}
+          onSendToMitigation={sendToMitigation}
+          onRemoveOutput={removeOutput}
         />
       </div>
-      <AssessmentOutputsSection
-        outputs={outputs}
-        onSendToMitigation={sendToMitigation}
-        onRemoveOutput={removeOutput}
-      />
-      <ManualPreventiveCheck onAddToAssessment={addToAssessment} />
-      <AssessmentArchiveSection
-        archived={archived}
-        onReaddToActive={readdToActive}
-        onClearArchive={clearArchive}
-        onDeleteItem={deleteArchivedItem}
-      />
-    </div>
+      <div data-animate-section>
+        <ManualPreventiveCheck onAddToAssessment={addToAssessment} />
+      </div>
+      <div data-animate-section>
+        <AssessmentArchiveSection
+          archived={archived}
+          onReaddToActive={readdToActive}
+          onClearArchive={clearArchive}
+          onDeleteItem={deleteArchivedItem}
+        />
+      </div>
+    </AnimeStagger>
   );
 }

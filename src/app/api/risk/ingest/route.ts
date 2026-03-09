@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import type { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getRequestOrigin } from "@/lib/request-origin";
 import { isNonRiskNotification } from "@/lib/signal-filters";
+import { getGoogleEmailConnectionStatus, listRecentGmailMessages, markGoogleEmailSync } from "@/server/email/google";
+import { triggerAutonomousRunForEvents } from "@/server/risk/live-internal-signals";
 import { callZapierMCPTool } from "@/server/zapier/mcp-client";
 import { getZapierMCPConfigForCompany, getZapierMCPToolSelections } from "@/server/zapier/mcp-config";
 
@@ -14,6 +18,14 @@ function isFollowUpOrError(text: string): boolean {
   if (/I wasn't able to determine the value for/i.test(t)) return true;
   if (/Could you (provide|specify|clarify)/i.test(t) && t.length < 400) return true;
   if (/I'm specialized in the/i.test(t) && /don't currently have available/i.test(t)) return true;
+  return false;
+}
+
+function isSetupOrConfigNoise(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t) return false;
+  if (t.includes("get_configuration_url")) return true;
+  if (/https?:\/\/mcp\.zapier\.com\/mcp\/servers\/[^/\s]+\/config/i.test(text)) return true;
   return false;
 }
 
@@ -275,8 +287,10 @@ function* contentToItems(content: unknown[], skipFollowUps = true): Generator<{ 
     const summary = itemToSummary(item);
     if (!summary) continue;
     if (skipFollowUps && isFollowUpOrError(summary)) continue;
+    if (isSetupOrConfigNoise(summary)) continue;
     if (isNonRiskNotification(summary)) continue;
     const rawText = textFromRawItem(item).join(" ");
+    if (rawText && isSetupOrConfigNoise(rawText)) continue;
     if (rawText && isNonRiskNotification(rawText)) continue;
     yield { summary, raw: item };
   }
@@ -292,6 +306,47 @@ function getExternalId(raw: unknown): string | null {
   return null;
 }
 
+function getRawTimestampMs(raw: unknown): number | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const candidates = [
+    o.internalDate,
+    o.receivedAt,
+    o.received_at,
+    o.sentAt,
+    o.sent_at,
+    o.createdAt,
+    o.timestamp,
+    o.date,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return value > 1_000_000_000_000 ? value : value * 1000;
+    }
+    if (typeof value === "string" && value.trim()) {
+      if (/^\d+$/.test(value.trim())) {
+        const numeric = Number(value.trim());
+        if (Number.isFinite(numeric) && numeric > 0) {
+          return numeric > 1_000_000_000_000 ? numeric : numeric * 1000;
+        }
+      }
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  const payload = o.payload;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    return getRawTimestampMs(payload);
+  }
+  return null;
+}
+
+function isNewSince(raw: unknown, baseline: Date | null): boolean {
+  if (!baseline) return true;
+  const ts = getRawTimestampMs(raw);
+  return ts == null || ts > baseline.getTime();
+}
+
 /** Only call tools that are read-style (find, search, list, get). Skip action tools (reply, send, remove, etc.). */
 function isReadOnlyTool(toolName: string): boolean {
   const lower = toolName.toLowerCase();
@@ -304,6 +359,7 @@ function isReadOnlyTool(toolName: string): boolean {
 /** Skip tools that require user-specific args we can't provide during auto ingest (e.g. attachment filename, file ID). */
 function isIngestibleWithoutUserInput(toolName: string): boolean {
   const lower = toolName.toLowerCase();
+  if (lower.includes("get_configuration_url") || lower.includes("configuration_url")) return false;
   if (lower.includes("attachment_by_filename") || lower.includes("get_attachment")) return false;
   if (lower.includes("by_id") && (lower.includes("retrieve") || lower.includes("file") || lower.includes("folder"))) return false;
   if (lower.includes("by_filename")) return false;
@@ -311,17 +367,18 @@ function isIngestibleWithoutUserInput(toolName: string): boolean {
 }
 
 /** Zapier MCP tools require an "instructions" string. Provide a natural-language request per tool type. */
-function getDefaultArgsForTool(toolName: string): Record<string, unknown> {
+function getDefaultArgsForTool(toolName: string, syncedAfter: Date | null = null): Record<string, unknown> {
   const lower = toolName.toLowerCase();
   const isGmail = lower.includes("gmail");
   const isEmail = isGmail || lower.includes("outlook") || lower.includes("microsoft") || lower.includes("mail");
+  const syncedAfterText = syncedAfter ? ` Only return items received after ${syncedAfter.toISOString()}.` : "";
   let instructions = "Return the 20 most recent items.";
   if (lower.includes("gmail_find") || lower.includes("gmail_find_email") || (isGmail && (lower.includes("find") || lower.includes("list")))) {
-    instructions = "Get my 20 most recent emails from my primary inbox. Return each email as an object with subject, from (or sender), date, snippet, and body (or message) so we can read the content. Include new and unread emails.";
+    instructions = `Get my 20 most recent emails from my primary inbox. Return each email as an object with subject, from (or sender), date, snippet, and body (or message) so we can read the content. Include new and unread emails.${syncedAfterText}`;
   } else if (isGmail && (lower.includes("search") || lower.includes("get"))) {
-    instructions = "Search my Gmail inbox for the 20 most recent emails. Return subject, sender, date, snippet, and full message body (plain text) for each.";
+    instructions = `Search my Gmail inbox for the 20 most recent emails. Return subject, sender, date, snippet, and full message body (plain text) for each.${syncedAfterText}`;
   } else if (lower.includes("outlook") || lower.includes("microsoft")) {
-    instructions = "Get my 20 most recent emails from my inbox. Return subject, sender, date, snippet, and message body for each.";
+    instructions = `Get my 20 most recent emails from my inbox. Return subject, sender, date, snippet, and message body for each.${syncedAfterText}`;
   } else if (lower.includes("drive") && lower.includes("retrieve")) {
     instructions = "List my 20 most recently modified files or folders (or recent items I have access to).";
   } else if (lower.includes("list") || lower.includes("search") || lower.includes("find")) {
@@ -355,28 +412,53 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [config, toolSelections] = await Promise.all([
+  let requestedReceivedAfter: Date | null = null;
+  try {
+    const body = await req.json();
+    if (body && typeof body === "object" && typeof (body as { receivedAfter?: unknown }).receivedAfter === "string") {
+      const parsed = new Date((body as { receivedAfter: string }).receivedAfter);
+      if (!Number.isNaN(parsed.getTime())) {
+        requestedReceivedAfter = parsed;
+      }
+    }
+  } catch {
+    // no JSON body provided
+  }
+
+  const [config, toolSelections, gmailStatus, zapierSyncState] = await Promise.all([
     getZapierMCPConfigForCompany(session.companyId),
     getZapierMCPToolSelections(session.companyId),
+    getGoogleEmailConnectionStatus(session.companyId),
+    db.integrationConnection.findUnique({
+      where: { companyId_provider: { companyId: session.companyId, provider: "zapier_mcp" } },
+      select: { connectedAt: true, lastSyncAt: true },
+    }),
   ]);
 
-  if (!config) {
+  const inputContextTools = toolSelections.inputContextTools;
+  const hasDirectGmail = gmailStatus.connected;
+
+  if (!config && !hasDirectGmail) {
     return NextResponse.json(
-      { error: "Zapier not connected. Connect in Dashboard → Integrations." },
+      { error: "No internal source connected. Connect Gmail directly or connect Zapier in Dashboard → Integrations." },
       { status: 503 }
     );
   }
 
-  const inputContextTools = toolSelections.inputContextTools;
-  if (inputContextTools.length === 0) {
+  if (inputContextTools.length === 0 && !hasDirectGmail) {
     return NextResponse.json(
-      { error: "No input-context tools configured. Assign tools in Integrations (input context zone)." },
+      { error: "No input-context tools configured. Assign tools in Integrations or connect Gmail directly." },
       { status: 400 }
     );
   }
 
-  const readOnlyTools = inputContextTools.filter((t) => isReadOnlyTool(t) && isIngestibleWithoutUserInput(t));
-  if (readOnlyTools.length === 0) {
+  const isEmailLikeTool = (toolName: string) => /gmail|outlook|microsoft|mail|email/.test(toolName.toLowerCase());
+  const readOnlyTools = config
+    ? inputContextTools
+        .filter((t) => isReadOnlyTool(t) && isIngestibleWithoutUserInput(t))
+        .filter((t) => !(hasDirectGmail && isEmailLikeTool(t)))
+    : [];
+  if (readOnlyTools.length === 0 && !hasDirectGmail) {
     return NextResponse.json(
       { error: "No read-style tools in input context (e.g. Gmail Find Email, Search). Add find/search/list tools to the input context zone." },
       { status: 400 }
@@ -386,15 +468,83 @@ export async function POST(req: Request) {
   const created: { id: string; source: string; toolName: string }[] = [];
   const toolResults: { name: string; status: "ok" | "empty" | "error"; count: number; rawCount?: number; parsedCount?: number; message?: string }[] = [];
   const sourceByTool = (name: string) => name.split(":")[0]?.trim() || name;
+  const zapierEmailBaseline = zapierSyncState?.lastSyncAt ?? zapierSyncState?.connectedAt ?? null;
+  const effectiveEmailBaseline =
+    requestedReceivedAfter && zapierEmailBaseline
+      ? new Date(Math.max(requestedReceivedAfter.getTime(), zapierEmailBaseline.getTime()))
+      : (requestedReceivedAfter ?? zapierEmailBaseline ?? null);
+  const syncCompletedAt = new Date();
 
   const isGmailEmailTool = (t: string) => {
     const lower = t.toLowerCase();
     return lower.includes("gmail") && (lower.includes("find") || lower.includes("search") || lower.includes("get") || lower.includes("list"));
   };
 
+  if (hasDirectGmail) {
+    try {
+      // Direct Gmail already applies its own last-sync checkpoint.
+      // Do not apply Zapier-derived baseline again here.
+      const recentItems = await listRecentGmailMessages(session.companyId, 20);
+      const parsedCount = recentItems.length;
+      if (recentItems.length === 0) {
+        toolResults.push({ name: "gmail_direct", status: "empty", count: 0, rawCount: 0, parsedCount: 0, message: "No recent Gmail messages" });
+      } else {
+        const normalized = recentItems.map((item) => ({ summary: item.summary, raw: item.raw }));
+        const riskFlags = await classifyRiskRelevance(normalized);
+        let riskItems = recentItems.filter((_, i) => riskFlags[i]);
+        if (riskItems.length === 0 && recentItems.length > 0 && !isNonRiskNotification(recentItems[0].summary)) {
+          riskItems = [recentItems[0]];
+        }
+
+        let added = 0;
+        for (const item of riskItems) {
+          const existing = await db.ingestedEvent.findFirst({
+            where: {
+              companyId: session.companyId,
+              toolName: item.toolName,
+              externalId: item.externalId,
+            },
+          });
+          if (existing) continue;
+
+          const event = await db.ingestedEvent.create({
+            data: {
+              companyId: session.companyId,
+              source: item.source,
+              toolName: item.toolName,
+              externalId: item.externalId,
+              rawContent: item.raw as Prisma.InputJsonValue,
+              signalSummary: item.summary,
+            },
+          });
+          created.push({ id: event.id, source: item.source, toolName: item.toolName });
+          added++;
+        }
+
+        toolResults.push({
+          name: "gmail_direct",
+          status: "ok",
+          count: added,
+          rawCount: recentItems.length,
+          parsedCount,
+          message: added === 0 ? "All Gmail emails already ingested or skipped" : undefined,
+        });
+      }
+      await markGoogleEmailSync(session.companyId, syncCompletedAt);
+    } catch (err) {
+      console.error("Direct Gmail ingest failed:", err);
+      toolResults.push({
+        name: "gmail_direct",
+        status: "error",
+        count: 0,
+        message: err instanceof Error ? err.message : "Gmail sync failed",
+      });
+    }
+  }
+
   for (const toolName of readOnlyTools) {
     try {
-      const args = getDefaultArgsForTool(toolName);
+      const args = getDefaultArgsForTool(toolName, isEmailLikeTool(toolName) ? effectiveEmailBaseline : null);
       const result = await callZapierMCPTool(config, toolName, args);
       if (result.isError) {
         console.warn(`Ingest: ${toolName} returned isError`, JSON.stringify(result.content?.slice(0, 1)).slice(0, 300));
@@ -434,9 +584,12 @@ export async function POST(req: Request) {
         }
       }
 
-      const items = isGmailEmailTool(toolName)
+      const allItems = isGmailEmailTool(toolName)
         ? [...gmailResultsToSummaries(content)].slice(0, 20)
         : [...contentToItems(content)].slice(0, 20);
+      const items = isEmailLikeTool(toolName) && effectiveEmailBaseline
+        ? allItems.filter(({ raw }) => isNewSince(raw, effectiveEmailBaseline))
+        : allItems;
 
       const parsedCount = items.length;
       if (items.length === 0) {
@@ -455,7 +608,7 @@ export async function POST(req: Request) {
             if (fallback.length === 200) fallback += "…";
           }
         }
-        const fallbackRelevant = fallback && !isFollowUpOrError(fallback) && !isNonRiskNotification(fallback)
+        const fallbackRelevant = fallback && !isFollowUpOrError(fallback) && !isSetupOrConfigNoise(fallback) && !isNonRiskNotification(fallback)
           ? (await classifyRiskRelevance([{ summary: fallback, raw: content[0] }]))[0]
           : false;
         if (fallbackRelevant) {
@@ -532,41 +685,22 @@ export async function POST(req: Request) {
     }
   }
 
+  if (config) {
+    await db.integrationConnection.updateMany({
+      where: { companyId: session.companyId, provider: "zapier_mcp" },
+      data: { lastSyncAt: syncCompletedAt },
+    });
+  }
+
   // When internal signals are "live", trigger autonomous run for the new events so a case starts immediately.
   if (created.length > 0 && session.companyId) {
     try {
-      const config = await db.autonomousAgentConfig.findUnique({
-        where: { companyId: session.companyId },
+      await triggerAutonomousRunForEvents({
+        companyId: session.companyId,
+        eventIds: created.map((e) => e.id),
+        origin: getRequestOrigin(req),
+        cookieHeader: req.headers.get("cookie"),
       });
-      const mode = (config as { internalSignalMode?: string } | null)?.internalSignalMode ?? "lookback";
-      const sources = config?.signalSources ?? "both";
-      const level = config?.automationLevel ?? "off";
-      if (
-        mode === "live" &&
-        (sources === "internal_only" || sources === "both") &&
-        level !== "off"
-      ) {
-        const base = process.env.NEXTAUTH_URL
-          || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-        const url = base.startsWith("http") ? base : `https://${base}`;
-        const internalSecret = process.env.INTERNAL_API_SECRET;
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-          Cookie: req.headers.get("cookie") ?? "",
-        };
-        if (internalSecret) {
-          headers["x-internal-secret"] = internalSecret;
-        }
-        await fetch(`${url}/api/agents/autonomous/run`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            eventIds: created.map((e) => e.id),
-            companyId: session.companyId,
-          }),
-          cache: "no-store",
-        });
-      }
     } catch (triggerErr) {
       console.error("Ingest: failed to trigger autonomous run (live internal):", triggerErr);
     }

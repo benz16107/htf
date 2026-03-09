@@ -6,6 +6,7 @@ import { isNonRiskNotification } from "@/lib/signal-filters";
 import { runSignalRiskAgent } from "@/server/agents/signal-agent";
 import { createRiskCaseFromAssessment } from "@/server/risk/create-from-assessment";
 import { generateMitigationPlan } from "@/server/agents/mitigation-agent";
+import { executeMitigationPlan } from "@/server/agents/execute-mitigation-plan";
 
 const SEVERITY_ORDER = ["MINOR", "MODERATE", "SEVERE", "CRITICAL"] as const;
 
@@ -15,6 +16,63 @@ const DEFAULT_LOOKBACK_MINUTES = 60;
 const MIN_INTERNAL_LOOKBACK_MINUTES = 60;
 /** External signals: minimum lookback so we don't require signals to be only minutes old. */
 const MIN_EXTERNAL_LOOKBACK_MINUTES = 60;
+
+function normalizeSignalSources(value: string | null | undefined): "internal_only" | "external_only" | "both" {
+  const v = (value ?? "").toLowerCase().trim().replace(/\s+/g, "_");
+  if (v === "internal_only" || v === "internal") return "internal_only";
+  if (v === "external_only" || v === "external") return "external_only";
+  return "both";
+}
+
+function getInternalRunSecret(): string | null {
+  return (
+    process.env.INTERNAL_API_SECRET?.trim() ||
+    process.env.NEXTAUTH_SECRET?.trim() ||
+    process.env.ZAPIER_MCP_EMBED_SECRET?.trim() ||
+    null
+  );
+}
+
+function signalSourcesFromRunDetails(details: unknown): "internal_only" | "external_only" | "both" | null {
+  if (!details || typeof details !== "object") return null;
+  return normalizeSignalSources((details as { signalSources?: string | null }).signalSources ?? null);
+}
+
+function normalizeUrlForDedup(raw?: string | null): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase();
+    const pathname = u.pathname.replace(/\/+$/, "").toLowerCase();
+    const kept = new URLSearchParams();
+    for (const [k, v] of u.searchParams.entries()) {
+      const key = k.toLowerCase();
+      if (key.startsWith("utm_")) continue;
+      if (key === "gclid" || key === "fbclid" || key === "mc_cid" || key === "mc_eid" || key === "ref" || key === "source") continue;
+      kept.set(k, v);
+    }
+    const query = kept.toString();
+    return `${host}${pathname}${query ? `?${query}` : ""}`;
+  } catch {
+    return raw.trim().toLowerCase();
+  }
+}
+
+function normalizeTitleForDedup(title?: string | null): string {
+  return (title || "")
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function externalSignalFingerprint(signal: { title?: string | null; url?: string | null; source?: string | null }): string {
+  const url = normalizeUrlForDedup(signal.url);
+  if (url) return `url:${url}`;
+  return `title:${normalizeTitleForDedup(signal.title)}|source:${(signal.source ?? "").toLowerCase().trim()}`;
+}
 
 async function logAutonomous(
   companyId: string,
@@ -49,6 +107,25 @@ async function logAutonomous(
   }
 }
 
+async function logPlanExecutionDeferred(
+  companyId: string,
+  runId: string,
+  opts: {
+    signalType?: "internal" | "external";
+    signalId?: string;
+    riskCaseId: string;
+    planId: string;
+    summary: string;
+    details?: Record<string, unknown>;
+  }
+) {
+  await logAutonomous(companyId, runId, "plan_execution_deferred", opts);
+}
+
+function minutesAgo(minutes: number): Date {
+  return new Date(Date.now() - minutes * 60 * 1000);
+}
+
 function severityAtOrAbove(severity: string, min: string): boolean {
   const a = SEVERITY_ORDER.indexOf(severity as (typeof SEVERITY_ORDER)[number]);
   const b = SEVERITY_ORDER.indexOf(min as (typeof SEVERITY_ORDER)[number]);
@@ -79,7 +156,7 @@ export async function POST(req: Request) {
     }
 
     const cronSecret = process.env.CRON_SECRET;
-    const internalSecret = process.env.INTERNAL_API_SECRET;
+    const internalSecret = getInternalRunSecret();
     const isCronTrigger = Boolean(cronSecret && req.headers.get("x-cron-secret") === cronSecret && body.companyId);
     const isInternalTrigger = Boolean(
       internalSecret &&
@@ -137,7 +214,7 @@ export async function POST(req: Request) {
       });
     }
 
-    const signalSources = (config?.signalSources ?? "both").toLowerCase();
+    const signalSources = normalizeSignalSources(config?.signalSources);
     const rawInternalLookback = config?.internalSignalLookbackMinutes ?? DEFAULT_LOOKBACK_MINUTES;
     const internalLookbackMinutes = Math.max(
       MIN_INTERNAL_LOOKBACK_MINUTES,
@@ -156,11 +233,17 @@ export async function POST(req: Request) {
       ? config.requireApprovalForProbabilityAbove / 100
       : null;
     const maxAutoExecutionsPerDay = config?.maxAutoExecutionsPerDay ?? 5;
+    const configuredAllowedActionTypes = Array.isArray(config?.allowedActionTypesToAutoExecute)
+      ? (config.allowedActionTypesToAutoExecute as string[])
+      : null;
     const allowedActionTypes = new Set(
-      Array.isArray(config?.allowedActionTypesToAutoExecute)
-        ? (config.allowedActionTypesToAutoExecute as string[])
-        : ["zapier_mcp", "email"]
+      (configuredAllowedActionTypes && configuredAllowedActionTypes.length > 0)
+        ? configuredAllowedActionTypes
+        : ["zapier_mcp", "email", "notification", "zapier_action", "erp_update"]
     );
+    // Compatibility bridge for older configs: zapier_action and zapier_mcp are interchangeable execution paths.
+    if (allowedActionTypes.has("zapier_mcp")) allowedActionTypes.add("zapier_action");
+    if (allowedActionTypes.has("zapier_action")) allowedActionTypes.add("zapier_mcp");
     const requireApprovalForFirstNPerDay = config?.requireApprovalForFirstNPerDay ?? 0;
 
     const todayStart = new Date();
@@ -192,6 +275,7 @@ export async function POST(req: Request) {
 
     let runId: string;
     let logRunCompleted = true;
+    let activeRunStartedAt: Date | null = null;
 
     /** When set (e.g. from ingest "live" trigger), only process these internal event IDs. */
     const liveEventIds = Array.isArray(bodyEventIds) && bodyEventIds.length > 0
@@ -199,32 +283,78 @@ export async function POST(req: Request) {
       : null;
 
     if (bodyRunId) {
-      runId = bodyRunId;
+      const existingRunStart = await db.autonomousAgentLog.findFirst({
+        where: { companyId: companyId, runId: bodyRunId, actionType: "run_started" },
+        orderBy: { createdAt: "asc" },
+        select: { createdAt: true, details: true },
+      });
+      const startedSignalSources = signalSourcesFromRunDetails(existingRunStart?.details);
+      const sourcePolicyChanged =
+        startedSignalSources == null || startedSignalSources !== signalSources;
+      if (sourcePolicyChanged) {
+        await logAutonomous(companyId, bodyRunId, "run_completed", {
+          summary: "Run restarted after signal source policy changed",
+          details: {
+            restarted: true,
+            previousSignalSources: startedSignalSources,
+            nextSignalSources: signalSources,
+          },
+        });
+        runId = crypto.randomUUID();
+        activeRunStartedAt = new Date();
+        await logAutonomous(companyId, runId, "run_started", {
+          summary: "Run started (continuous)",
+          details: { continuous: true, signalSources },
+        });
+      } else {
+        runId = bodyRunId;
+        activeRunStartedAt = existingRunStart?.createdAt ?? null;
+      }
       logRunCompleted = false;
     } else if (bodyContinuous) {
       const startedLog = await db.autonomousAgentLog.findFirst({
         where: { companyId: companyId, actionType: "run_started" },
         orderBy: { createdAt: "desc" },
-        select: { runId: true },
+        select: { runId: true, createdAt: true, details: true },
       });
       const hasCompleted = startedLog
         ? await db.autonomousAgentLog.findFirst({
             where: { companyId: companyId, runId: startedLog.runId, actionType: "run_completed" },
           })
         : true;
-      if (startedLog && !hasCompleted) {
+      const startedSignalSources = signalSourcesFromRunDetails(startedLog?.details);
+      const sourcePolicyChanged =
+        startedSignalSources == null || startedSignalSources !== signalSources;
+      if (startedLog && !hasCompleted && !sourcePolicyChanged) {
         runId = startedLog.runId;
+        activeRunStartedAt = startedLog.createdAt;
       } else {
+        if (startedLog && !hasCompleted && sourcePolicyChanged) {
+          await logAutonomous(companyId, startedLog.runId, "run_completed", {
+            summary: "Run restarted after signal source policy changed",
+            details: {
+              restarted: true,
+              previousSignalSources: startedSignalSources,
+              nextSignalSources: signalSources,
+            },
+          });
+        }
         runId = crypto.randomUUID();
+        activeRunStartedAt = new Date();
         await logAutonomous(companyId, runId, "run_started", {
           summary: "Run started (continuous)",
-          details: { continuous: true },
+          details: { continuous: true, signalSources },
         });
       }
       logRunCompleted = false;
     } else {
       runId = crypto.randomUUID();
     }
+
+    const internalCreatedAfter =
+      activeRunStartedAt ?? minutesAgo(internalLookbackMinutes);
+    const externalCreatedAfter =
+      activeRunStartedAt ?? minutesAgo(externalLookbackMinutes);
 
     let internalJobCount = 0;
     let externalJobCount = 0;
@@ -237,9 +367,13 @@ export async function POST(req: Request) {
           take: liveEventIds.length,
         });
       } else {
-        // Pull any unprocessed internal signals (no lookback window) so we never miss ingested events
+        // Only process new internal signals inside the active run window / lookback window.
         events = await db.ingestedEvent.findMany({
-          where: { companyId: companyId, autonomousProcessedAt: null },
+          where: {
+            companyId: companyId,
+            autonomousProcessedAt: null,
+            createdAt: { gte: internalCreatedAfter },
+          },
           orderBy: { createdAt: "desc" },
           take: 10,
         });
@@ -263,14 +397,34 @@ export async function POST(req: Request) {
     }
 
     if (signalSources === "external_only" || signalSources === "both") {
-      // Pull any unprocessed external signals (no lookback window) so we never miss saved signals
+      // Only process new external signals inside the active run window / lookback window.
       const signals = await db.savedExternalSignal.findMany({
-        where: { companyId: companyId, autonomousProcessedAt: null },
+        where: {
+          companyId: companyId,
+          autonomousProcessedAt: null,
+          createdAt: { gte: externalCreatedAfter },
+        },
         orderBy: { createdAt: "desc" },
         take: 10,
       });
-      externalJobCount = signals.length;
+      const processedExternal = await db.savedExternalSignal.findMany({
+        where: {
+          companyId: companyId,
+          autonomousProcessedAt: { not: null },
+          createdAt: { gte: minutesAgo(60 * 24 * 60) },
+        },
+        select: { title: true, url: true, source: true },
+        take: 500,
+      });
+      const seenFingerprints = new Set(processedExternal.map((s) => externalSignalFingerprint(s)));
+      const duplicateSignalIds: string[] = [];
       for (const s of signals) {
+        const fingerprint = externalSignalFingerprint(s);
+        if (seenFingerprints.has(fingerprint)) {
+          duplicateSignalIds.push(s.id);
+          continue;
+        }
+        seenFingerprints.add(fingerprint);
         const startDate = s.createdAt.toISOString().split("T")[0];
         jobs.push({
           type: "external",
@@ -286,6 +440,14 @@ export async function POST(req: Request) {
           timeWindow: { startDate, expectedDurationDays: 7 },
         });
       }
+      externalJobCount = jobs.filter((j) => j.type === "external").length;
+      if (duplicateSignalIds.length > 0) {
+        const now = new Date();
+        await db.savedExternalSignal.updateMany({
+          where: { companyId, id: { in: duplicateSignalIds } },
+          data: { autonomousProcessedAt: now },
+        });
+      }
     }
 
     console.log(
@@ -299,17 +461,31 @@ export async function POST(req: Request) {
     if (!bodyRunId && !bodyContinuous) {
       const details: Record<string, unknown> = {
         jobCount: jobs.length,
+        signalSources,
         internalLookbackMinutes,
+        externalLookbackMinutes,
         internalCandidates: internalJobCount,
         externalCandidates: externalJobCount,
+        internalCreatedAfter: internalCreatedAfter.toISOString(),
+        externalCreatedAfter: externalCreatedAfter.toISOString(),
       };
       if ((signalSources === "internal_only" || signalSources === "both") && internalJobCount === 0) {
         const unprocessedInternalTotal = await db.ingestedEvent.count({
           where: { companyId: companyId, autonomousProcessedAt: null },
         });
+        const staleUnprocessedInternalTotal = await db.ingestedEvent.count({
+          where: {
+            companyId: companyId,
+            autonomousProcessedAt: null,
+            createdAt: { lt: internalCreatedAfter },
+          },
+        });
         details.unprocessedInternalTotal = unprocessedInternalTotal;
-        if (unprocessedInternalTotal > 0) {
-          details.hint = "Internal events exist but are older than lookback window; increase Internal signal lookback in Agent settings.";
+        details.staleUnprocessedInternalTotal = staleUnprocessedInternalTotal;
+        if (staleUnprocessedInternalTotal > 0) {
+          details.hint = "Older internal events exist, but the autonomous agent only processes new signals inside the active window.";
+        } else if (unprocessedInternalTotal > 0) {
+          details.hint = "Internal events exist but are outside the current active window.";
         } else {
           details.hint = "Run Sync from Zapier on Signals & risk to ingest internal signals.";
         }
@@ -352,12 +528,41 @@ export async function POST(req: Request) {
 
         const assessment = await runSignalRiskAgent(companyId, agentInput, {
           createRiskCase: false,
+          // Respect the autonomous source policy: internal-only runs should not
+          // enrich the assessment with broad live context that may include
+          // external/news-like sources from input-context tools.
+          includeLiveContext: signalSources !== "internal_only",
         });
 
         const severity =
           (assessment.impact?.severity && String(assessment.impact.severity).toUpperCase()) || "MODERATE";
         const prob = assessment.probability?.pointEstimate ?? 0;
         const revenueAtRisk = assessment.financialImpact?.revenueAtRiskUsd ?? 0;
+
+        if (
+          !severityAtOrAbove(severity, minSeverityToAct) ||
+          prob < minProbabilityToAct ||
+          revenueAtRisk < minRevenueAtRiskToAct
+        ) {
+          skipReasons.push("below_action_threshold");
+          await logAutonomous(companyId, runId, "signal_skipped", {
+            signalType: job.type,
+            signalId: job.id,
+            summary: job.triggerType.slice(0, 100),
+            details: {
+              reason: "Below autonomous action thresholds",
+              severity,
+              probability: prob,
+              revenueAtRisk,
+              minSeverityToAct,
+              minProbabilityToAct,
+              minRevenueAtRiskToAct,
+            },
+          });
+          await markProcessed(job, companyId);
+          processed++;
+          continue;
+        }
 
         if (automationLevel === "assess_only") {
           await logAutonomous(companyId, runId, "signal_assessed", {
@@ -436,6 +641,7 @@ export async function POST(req: Request) {
 
         const draftResult = await generateMitigationPlan(companyId, riskCaseId, scenario.id, {
           createdByAutonomousAgent: true,
+          executionModeOverride: automationLevel === "full_auto" ? "autonomous" : "human_in_loop",
         });
         const draftedPlanId = (draftResult as { planId?: string }).planId ?? null;
         if (draftedPlanId) {
@@ -452,10 +658,33 @@ export async function POST(req: Request) {
 
         if (automationLevel === "draft_only") {
           skipReasons.push("automation_level_draft_only");
+          await logPlanExecutionDeferred(companyId, runId, {
+            signalType: job.type,
+            signalId: job.id,
+            riskCaseId,
+            planId: draftedPlanId ?? draftResult.plan.id,
+            summary: "Execution not attempted because automation level is Draft only.",
+            details: {
+              category: "automation_level",
+              automationLevel,
+            },
+          });
           continue;
         }
         if (executedThisRun >= maxAutoExecutionsPerDay) {
           skipReasons.push("max_auto_executions_per_day_reached");
+          await logPlanExecutionDeferred(companyId, runId, {
+            signalType: job.type,
+            signalId: job.id,
+            riskCaseId,
+            planId: draftedPlanId ?? draftResult.plan.id,
+            summary: `Execution paused because today's auto-execution limit (${maxAutoExecutionsPerDay}) was reached.`,
+            details: {
+              category: "daily_limit",
+              executedToday: executedThisRun,
+              maxAutoExecutionsPerDay,
+            },
+          });
           continue;
         }
 
@@ -468,6 +697,19 @@ export async function POST(req: Request) {
         // When requireApprovalForFirstNPerDay > 0, the first N plans of the day need approval (no auto-execute).
         if (requireApprovalForFirstNPerDay > 0 && plansCreatedTodayNow <= requireApprovalForFirstNPerDay) {
           skipReasons.push("within_first_n_requiring_approval");
+          await logPlanExecutionDeferred(companyId, runId, {
+            signalType: job.type,
+            signalId: job.id,
+            riskCaseId,
+            planId: draftedPlanId ?? draftResult.plan.id,
+            summary: `Waiting for approval because this is plan ${plansCreatedTodayNow} today and the first ${requireApprovalForFirstNPerDay} plan(s) require review.`,
+            details: {
+              category: "approval_threshold",
+              reason: "within_first_n_requiring_approval",
+              planNumberToday: plansCreatedTodayNow,
+              requireApprovalForFirstNPerDay,
+            },
+          });
           continue;
         }
 
@@ -492,6 +734,19 @@ export async function POST(req: Request) {
           severityAtOrAboveStrict(planSeverity, requireApprovalForSeverity)
         ) {
           skipReasons.push("severity_requires_approval");
+          await logPlanExecutionDeferred(companyId, runId, {
+            signalType: job.type,
+            signalId: job.id,
+            riskCaseId,
+            planId: plan.id,
+            summary: `Waiting for approval because severity ${planSeverity} is at or above the approval threshold (${requireApprovalForSeverity}).`,
+            details: {
+              category: "approval_threshold",
+              reason: "severity_requires_approval",
+              actualSeverity: planSeverity,
+              thresholdSeverity: requireApprovalForSeverity,
+            },
+          });
           continue;
         }
         if (
@@ -499,6 +754,19 @@ export async function POST(req: Request) {
           planRevenue > requireApprovalForRevenueAbove
         ) {
           skipReasons.push("revenue_above_approval_threshold");
+          await logPlanExecutionDeferred(companyId, runId, {
+            signalType: job.type,
+            signalId: job.id,
+            riskCaseId,
+            planId: plan.id,
+            summary: `Waiting for approval because revenue at risk ($${planRevenue.toLocaleString()}) is above the approval threshold ($${requireApprovalForRevenueAbove.toLocaleString()}).`,
+            details: {
+              category: "approval_threshold",
+              reason: "revenue_above_approval_threshold",
+              actualRevenueAtRisk: planRevenue,
+              thresholdRevenueAtRisk: requireApprovalForRevenueAbove,
+            },
+          });
           continue;
         }
         if (
@@ -506,6 +774,19 @@ export async function POST(req: Request) {
           planProb > requireApprovalForProbabilityAbove
         ) {
           skipReasons.push("probability_above_approval_threshold");
+          await logPlanExecutionDeferred(companyId, runId, {
+            signalType: job.type,
+            signalId: job.id,
+            riskCaseId,
+            planId: plan.id,
+            summary: `Waiting for approval because probability ${(planProb * 100).toFixed(1)}% is above the approval threshold ${(requireApprovalForProbabilityAbove * 100).toFixed(1)}%.`,
+            details: {
+              category: "approval_threshold",
+              reason: "probability_above_approval_threshold",
+              actualProbabilityPercent: Number((planProb * 100).toFixed(1)),
+              thresholdProbabilityPercent: Number((requireApprovalForProbabilityAbove * 100).toFixed(1)),
+            },
+          });
           continue;
         }
 
@@ -517,55 +798,50 @@ export async function POST(req: Request) {
         )];
         if (disallowedTypes.length > 0) {
           skipReasons.push(`disallowed_action_types:${disallowedTypes.join(",")}`);
+          await logPlanExecutionDeferred(companyId, runId, {
+            signalType: job.type,
+            signalId: job.id,
+            riskCaseId,
+            planId: plan.id,
+            summary: `Execution paused because this draft includes action types not allowed for auto-execute: ${disallowedTypes.join(", ")}.`,
+            details: {
+              category: "action_type_policy",
+              disallowedTypes,
+              allowedActionTypes: [...allowedActionTypes],
+            },
+          });
           continue;
         }
 
-        const origin = process.env.NEXTAUTH_URL
-          || (typeof req.url === "string" ? new URL(req.url).origin : null)
-          || (req.headers.get("x-forwarded-host") ? `https://${req.headers.get("x-forwarded-host")}` : null)
-          || "http://localhost:3000";
-        const cookie = req.headers.get("cookie") || "";
-        const internalSecret = process.env.INTERNAL_API_SECRET;
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-          ...(cookie && { cookie }),
-          ...(internalSecret && {
-            "x-internal-secret": internalSecret,
-            "x-autonomous-company-id": companyId,
-          }),
-        };
-        const runRes = await fetch(`${origin}/api/agents/mitigation-action/execute`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ planId: plan.id }),
+        const result = await executeMitigationPlan({
+          companyId,
+          planId: plan.id,
+          executionSource: "autonomous",
         });
-        if (runRes.ok) {
-          const data = await runRes.json();
-          if (data.plan?.status === "EXECUTED") {
-            executed++;
-            executedThisRun++;
-            await logAutonomous(companyId, runId, "plan_executed", {
-              riskCaseId: plan.riskCaseId,
-              planId: plan.id,
-              summary: plan.riskCase?.triggerType?.slice(0, 100) ?? "Plan executed",
-            });
-            console.log("[autonomous] Plan executed:", plan.id);
-          } else if (data.executionResults?.failed?.length > 0) {
-            const errMsg = (data.executionResults.failed as { error?: string }[]).map((f) => f.error ?? "").join("; ").slice(0, 200);
-            skipReasons.push("execute_failed:" + errMsg);
-            console.warn("[autonomous] Execute had failures:", errMsg);
-          }
-        } else {
-          const errText = await runRes.text().catch(() => "");
-          let errMessage = errText.slice(0, 150);
-          try {
-            const errJson = JSON.parse(errText) as { error?: string };
-            if (errJson?.error) errMessage = errJson.error.slice(0, 200);
-          } catch {
-            // use raw slice
-          }
-          skipReasons.push(`execute_failed:${errMessage}`);
-          console.error("[autonomous] Execute HTTP error", runRes.status, errMessage);
+        if (result.plan?.status === "EXECUTED") {
+          executed++;
+          executedThisRun++;
+          await logAutonomous(companyId, runId, "plan_executed", {
+            riskCaseId: plan.riskCaseId,
+            planId: plan.id,
+            summary: plan.riskCase?.triggerType?.slice(0, 100) ?? "Plan executed",
+          });
+          console.log("[autonomous] Plan executed:", plan.id);
+        } else if ((result.executionResults?.failed.length ?? 0) > 0) {
+          const errMsg = (result.executionResults?.failed ?? []).map((f) => f.error ?? "").join("; ").slice(0, 200);
+          skipReasons.push("execute_failed:" + errMsg);
+          await logPlanExecutionDeferred(companyId, runId, {
+            signalType: job.type,
+            signalId: job.id,
+            riskCaseId,
+            planId: plan.id,
+            summary: `Execution started but failed for one or more actions: ${errMsg}`,
+            details: {
+              category: "execution_failed",
+              failures: result.executionResults?.failed ?? [],
+            },
+          });
+          console.warn("[autonomous] Execute had failures:", errMsg);
         }
       } catch (err) {
         console.error("Autonomous run item error:", err);

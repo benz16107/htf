@@ -8,8 +8,12 @@ import type { SelectedSignal } from "./types";
 const AUTO_SCAN_STORAGE_KEY = "risk-auto-scan";
 const INTEGRATIONS_FILTER_KEY = "risk-internal-integrations";
 const INTERNAL_CONFIG_KEY = "risk-internal-config";
+const INTERNAL_EVENTS_CACHE_KEY = "risk-internal-events-cache";
+const INTERNAL_LAST_SYNC_TOOLS_KEY = "risk-internal-last-sync-tools";
+const LIVE_REFRESH_MS = 5_000;
 
 const INTERVAL_OPTIONS = [
+  { value: 1, label: "1 min" },
   { value: 5, label: "5 min" },
   { value: 10, label: "10 min" },
   { value: 15, label: "15 min" },
@@ -114,6 +118,19 @@ function safePrettyJson(value: unknown): string {
   }
 }
 
+function isEmailIntegrationName(name: string | null | undefined): boolean {
+  const lower = (name ?? "").toLowerCase();
+  if (!lower) return false;
+  return (
+    lower === "email" ||
+    lower === "gmail_direct" ||
+    lower.includes("gmail") ||
+    lower.includes("outlook") ||
+    lower.includes("mail") ||
+    lower.includes("email")
+  );
+}
+
 function getStoredAutoScan(): boolean {
   if (typeof window === "undefined") return false;
   try {
@@ -137,8 +154,7 @@ function getStoredIntegrationFilter(): string[] | null {
 
 function setStoredIntegrationFilter(integrations: string[]) {
   try {
-    if (integrations.length === 0) localStorage.removeItem(INTEGRATIONS_FILTER_KEY);
-    else localStorage.setItem(INTEGRATIONS_FILTER_KEY, JSON.stringify(integrations));
+    localStorage.setItem(INTEGRATIONS_FILTER_KEY, JSON.stringify(integrations));
   } catch {}
 }
 
@@ -161,6 +177,55 @@ function getStoredInternalConfig(): InternalConfig {
 function setStoredInternalConfig(config: InternalConfig) {
   try {
     localStorage.setItem(INTERNAL_CONFIG_KEY, JSON.stringify(config));
+  } catch {}
+}
+
+function getStoredEvents(): EventItem[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(INTERNAL_EVENTS_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item) =>
+      item &&
+      typeof item === "object" &&
+      typeof (item as { id?: unknown }).id === "string" &&
+      typeof (item as { source?: unknown }).source === "string" &&
+      typeof (item as { toolName?: unknown }).toolName === "string" &&
+      typeof (item as { signal?: unknown }).signal === "string" &&
+      typeof (item as { time?: unknown }).time === "string"
+    ) as EventItem[];
+  } catch {
+    return [];
+  }
+}
+
+function setStoredEvents(events: EventItem[]) {
+  try {
+    localStorage.setItem(INTERNAL_EVENTS_CACHE_KEY, JSON.stringify(events));
+  } catch {}
+}
+
+function getStoredLastSyncTools(): { name: string; status: string; count: number; rawCount?: number; parsedCount?: number; message?: string }[] | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(INTERNAL_LAST_SYNC_TOOLS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function setStoredLastSyncTools(tools: { name: string; status: string; count: number; rawCount?: number; parsedCount?: number; message?: string }[] | null) {
+  try {
+    if (!tools || tools.length === 0) {
+      localStorage.removeItem(INTERNAL_LAST_SYNC_TOOLS_KEY);
+      return;
+    }
+    localStorage.setItem(INTERNAL_LAST_SYNC_TOOLS_KEY, JSON.stringify(tools));
   } catch {}
 }
 
@@ -282,7 +347,7 @@ function InternalSignalRow({
                       )}
                       {!email.body && (
                         <p className="muted text-xs" style={{ margin: "0.25rem 0 0 0" }}>
-                          Message content isn’t available for this item (some email tools only return a snippet). Run “Sync from Zapier” again after the updated Gmail retrieval to store full bodies for new events.
+                          Message content isn’t available for this item (some email tools only return a snippet). Run a fresh sync after the updated Gmail retrieval to store full bodies for new events.
                         </p>
                       )}
                     </div>
@@ -311,6 +376,7 @@ type InternalSignalSectionProps = {
 export function InternalSignalSection({ onAddToAssessment }: InternalSignalSectionProps) {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [configuredTools, setConfiguredTools] = useState<string[]>([]);
+  const [directEmailConnected, setDirectEmailConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -323,6 +389,8 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
   const [lastSyncTools, setLastSyncTools] = useState<{ name: string; status: string; count: number; rawCount?: number; parsedCount?: number; message?: string }[] | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<null | { type: "one"; id: string } | { type: "all" }>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [prefsDirty, setPrefsDirty] = useState(false);
+  const [prefsSavedAt, setPrefsSavedAt] = useState<number | null>(null);
   const mounted = useRef(true);
 
   const fetchToolSelections = useCallback(async () => {
@@ -331,6 +399,7 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
       const data = await res.json().catch(() => ({}));
       if (res.ok && Array.isArray(data.inputContextTools)) {
         setConfiguredTools(data.inputContextTools);
+        setDirectEmailConnected(Boolean(data.directEmailConnected));
       }
     } catch { /* ignore */ }
   }, []);
@@ -346,12 +415,12 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
         setEvents([]);
         return;
       }
-      setEvents(
-        (data.events || []).map((e: { id: string; source: string; toolName: string; signal: string; time: string }) => ({
+      const nextEvents = (data.events || []).map((e: { id: string; source: string; toolName: string; signal: string; time: string }) => ({
           ...e,
           time: formatTime(e.time),
-        }))
-      );
+      })) as EventItem[];
+      setEvents(nextEvents);
+      setStoredEvents(nextEvents);
     } catch {
       setError("Failed to load events.");
       setEvents([]);
@@ -364,8 +433,17 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
     mounted.current = true;
     setAutoScan(getStoredAutoScan());
     setIntervalMinutes(getStoredInternalConfig().intervalMinutes);
+    const cachedEvents = getStoredEvents();
+    if (cachedEvents.length > 0) {
+      setEvents(cachedEvents);
+      setLoading(false);
+    }
+    const cachedSyncTools = getStoredLastSyncTools();
+    if (cachedSyncTools && cachedSyncTools.length > 0) {
+      setLastSyncTools(cachedSyncTools);
+    }
     const stored = getStoredIntegrationFilter();
-    if (stored && stored.length > 0) setSelectedIntegrations(stored);
+    if (stored !== null) setSelectedIntegrations(stored);
     return () => { mounted.current = false; };
   }, []);
 
@@ -374,16 +452,23 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
   }, [fetchToolSelections]);
 
   const fromEvents = Array.from(new Set(events.map((e) => e.toolName || e.source).filter(Boolean)));
-  const integrations = Array.from(new Set([...configuredTools, ...fromEvents]));
+  const hasEmailIntegration =
+    directEmailConnected ||
+    configuredTools.some((name) => isEmailIntegrationName(name)) ||
+    fromEvents.some((name) => isEmailIntegrationName(name));
+  const nonEmailIntegrations = Array.from(
+    new Set([...configuredTools, ...fromEvents].filter((name) => !isEmailIntegrationName(name)))
+  );
+  const integrations = hasEmailIntegration ? ["email", ...nonEmailIntegrations] : nonEmailIntegrations;
   const integrationSet = new Set(integrations);
   const sanitizedSelection =
-    selectedIntegrations && selectedIntegrations.length > 0
+    selectedIntegrations !== null
       ? selectedIntegrations.filter((n) => integrationSet.has(n))
       : null;
-  const displaySet = sanitizedSelection && sanitizedSelection.length > 0 ? new Set(sanitizedSelection) : null;
+  const displaySet = sanitizedSelection !== null ? new Set(sanitizedSelection) : null;
 
   useEffect(() => {
-    if (selectedIntegrations && selectedIntegrations.length > 0 && sanitizedSelection && sanitizedSelection.length < selectedIntegrations.length) {
+    if (selectedIntegrations !== null && sanitizedSelection !== null && sanitizedSelection.length < selectedIntegrations.length) {
       setSelectedIntegrations(sanitizedSelection);
       setStoredIntegrationFilter(sanitizedSelection);
     }
@@ -391,7 +476,25 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
 
 
   useEffect(() => {
-    fetchEvents();
+    const refresh = () => {
+      if (!mounted.current) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      fetchEvents();
+    };
+
+    refresh();
+    const poll = window.setInterval(refresh, LIVE_REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(poll);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [fetchEvents]);
 
   const onConfirmDeleteConfirm = useCallback(async () => {
@@ -430,7 +533,10 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
         setError(data.error || "Sync failed");
         return;
       }
-      if (Array.isArray(data.tools)) setLastSyncTools(data.tools);
+      if (Array.isArray(data.tools)) {
+        setLastSyncTools(data.tools);
+        setStoredLastSyncTools(data.tools);
+      }
       await fetchEvents();
     } catch {
       if (mounted.current) setError("Sync failed");
@@ -458,27 +564,44 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
   };
 
   const filteredEvents = displaySet
-    ? events.filter((e) => displaySet.has(e.toolName) || displaySet.has(e.source))
+    ? events.filter((e) => {
+        const filterKeys = isEmailIntegrationName(e.toolName) || isEmailIntegrationName(e.source)
+          ? ["email", e.toolName, e.source]
+          : [e.toolName, e.source];
+        return filterKeys.some((name) => name && displaySet.has(name));
+      })
     : events;
 
   const toggleIntegration = (name: string) => {
     if (selectedIntegrations === null) {
       const next = integrations.filter((n) => n !== name);
-      setSelectedIntegrations(next.length === 0 ? null : next);
-      setStoredIntegrationFilter(next.length === 0 ? [] : next);
+      setSelectedIntegrations(next);
     } else {
       const idx = selectedIntegrations.indexOf(name);
       const next = idx >= 0 ? selectedIntegrations.filter((n) => n !== name) : [...selectedIntegrations, name];
-      setSelectedIntegrations(next.length === 0 ? null : next);
-      setStoredIntegrationFilter(next.length === 0 ? [] : next);
+      setSelectedIntegrations(next);
     }
+    setPrefsDirty(true);
+    setPrefsSavedAt(null);
   };
 
   const showAll = () => {
     setSelectedIntegrations(null);
-    try {
-      localStorage.removeItem(INTEGRATIONS_FILTER_KEY);
-    } catch {}
+    setPrefsDirty(true);
+    setPrefsSavedAt(null);
+  };
+
+  const savePreferences = () => {
+    setStoredInternalConfig({ intervalMinutes });
+    if (selectedIntegrations === null) {
+      try {
+        localStorage.removeItem(INTEGRATIONS_FILTER_KEY);
+      } catch {}
+    } else {
+      setStoredIntegrationFilter(selectedIntegrations);
+    }
+    setPrefsDirty(false);
+    setPrefsSavedAt(Date.now());
   };
 
   const confirmDeleteOpen = confirmDelete !== null;
@@ -547,7 +670,7 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
             <span className="muted text-sm">{syncing ? "Scanning…" : `Auto scan every ${intervalMinutes} min`}</span>
           ) : (
             <button type="button" className="btn primary btn-sm" onClick={() => runIngest()} disabled={syncing}>
-              {syncing ? "Syncing…" : "Sync from Zapier"}
+              {syncing ? "Syncing…" : "Sync now"}
             </button>
           )}
         </div>
@@ -555,6 +678,13 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
 
       {configOpen && (
         <div className="card-flat stack-sm" style={{ margin: "0 1.25rem 0.5rem", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--border)" }}>
+          <div className="card-flat stack-xs" style={{ padding: "0.75rem", border: "1px solid var(--border)" }}>
+            <p className="text-sm font-medium" style={{ margin: 0 }}>Internal signal setup</p>
+            <p className="muted text-xs" style={{ margin: 0 }}>
+              Recommended: connect Gmail in Dashboard → Integrations → Direct email sync for native inbox retrieval and Gmail push.
+              Non-email tools still come from Integrations input context.
+            </p>
+          </div>
           <p className="text-sm font-medium" style={{ margin: 0 }}>Auto scan interval</p>
           <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.35rem" }}>
             {INTERVAL_OPTIONS.map((opt) => (
@@ -564,16 +694,17 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
                 className={intervalMinutes === opt.value ? "btn primary btn-sm" : "btn secondary btn-sm"}
                 onClick={() => {
                   setIntervalMinutes(opt.value);
-                  setStoredInternalConfig({ intervalMinutes: opt.value });
+                  setPrefsDirty(true);
+                  setPrefsSavedAt(null);
                 }}
               >
                 {opt.label}
               </button>
             ))}
           </div>
-          <p className="text-sm font-medium" style={{ margin: "0.75rem 0 0 0" }}>Integrations to show</p>
+          <p className="text-sm font-medium" style={{ margin: "0.75rem 0 0 0" }}>Other integrations to show</p>
           {integrations.length === 0 ? (
-            <p className="muted text-xs" style={{ margin: "0.25rem 0 0 0" }}>Add tools in Dashboard → Integrations (input context), then Save.</p>
+            <p className="muted text-xs" style={{ margin: "0.25rem 0 0 0" }}>Connect email or add Zapier input-context tools in Dashboard → Integrations, then Save.</p>
           ) : (
             <div className="integrations-zone__list" style={{ maxHeight: 220 }}>
               {groupToolsByApp(integrations.map((name) => ({ name }))).map(({ appKey, appLabel, tools: appTools }) => {
@@ -596,7 +727,8 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
                             const base = selectedIntegrations ?? integrations;
                             const next = Array.from(new Set([...base, ...names]));
                             setSelectedIntegrations(next);
-                            setStoredIntegrationFilter(next);
+                            setPrefsDirty(true);
+                            setPrefsSavedAt(null);
                           }}
                         >
                           Select all
@@ -609,8 +741,9 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
                             e.stopPropagation();
                             const base = selectedIntegrations ?? integrations;
                             const next = base.filter((n) => !names.has(n));
-                            setSelectedIntegrations(next.length === 0 ? null : next);
-                            setStoredIntegrationFilter(next.length === 0 ? [] : next);
+                            setSelectedIntegrations(next);
+                            setPrefsDirty(true);
+                            setPrefsSavedAt(null);
                           }}
                         >
                           Clear
@@ -628,7 +761,7 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
                           checked={!displaySet || displaySet.has(tool.name)}
                           onChange={() => toggleIntegration(tool.name)}
                         />
-                        <span className="integrations-zone__item-text">{tool.name}</span>
+                        <span className="integrations-zone__item-text">{tool.name === "email" ? "Email" : tool.name}</span>
                       </label>
                     ))}
                   </details>
@@ -641,6 +774,17 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
               Show all
             </button>
           )}
+          <div className="row gap-xs" style={{ marginTop: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="btn primary btn-sm"
+              onClick={savePreferences}
+              disabled={!prefsDirty}
+            >
+              Save preferences
+            </button>
+            {prefsSavedAt ? <span className="text-xs muted">Saved</span> : null}
+          </div>
           <p className="text-sm font-medium" style={{ margin: "0.75rem 0 0 0" }}>Remove all</p>
           <button
             type="button"
@@ -667,14 +811,14 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
           <p style={{ margin: 0 }}>Last sync: {lastSyncTools.map((t) => {
             if (t.message) return `${t.name}: ${t.message}`;
             if (t.status === "error") return `${t.name}: error`;
-            if (t.status === "empty") return `${t.name}: ${t.rawCount === 0 ? "no data from Zapier" : "couldn't parse emails"}`;
+            if (t.status === "empty") return `${t.name}: ${t.rawCount === 0 ? "no new data" : "couldn't parse emails"}`;
             const detail = t.rawCount != null || t.parsedCount != null
               ? ` (${t.rawCount ?? "?"} returned, ${t.count} new)`
               : ` ${t.count} item${t.count !== 1 ? "s" : ""}`;
             return `${t.name}:${detail}`;
           }).join(" · ")}</p>
           {lastSyncTools.every((t) => t.status === "empty" || t.status === "error" || t.count === 0) && (
-            <p style={{ margin: "0.35rem 0 0 0" }}>Ensure your email app (e.g. Gmail) is in <strong>Input context</strong> in Dashboard → Integrations, then Sync again.</p>
+            <p style={{ margin: "0.35rem 0 0 0" }}>If Gmail is connected directly, reconnect or sync again. For other tools, ensure they are in <strong>Input context</strong> in Dashboard → Integrations.</p>
           )}
         </div>
       )}
@@ -685,7 +829,7 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
         ) : filteredEvents.length === 0 ? (
           <div className="stack-xs">
             <p className="muted text-sm">
-              {events.length === 0 ? "No events. Turn on Auto scan or Sync from Zapier." : "No events match filters. Show all or change selection."}
+              {events.length === 0 ? "No events. Turn on Auto scan, connect Gmail directly, or run Sync now." : "No events match filters. Show all or change selection."}
             </p>
           </div>
         ) : (

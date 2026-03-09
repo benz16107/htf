@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { renewExpiringGmailWatches } from "@/server/email/google";
 
 const RUN_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes — should match cron schedule
 
@@ -78,9 +79,17 @@ async function runCron(req: Request) {
     }
   }
 
+  let gmailWatches = { checked: 0, renewed: 0, failed: 0 };
+  try {
+    gmailWatches = await renewExpiringGmailWatches();
+  } catch (err) {
+    console.error("Cron Gmail watch renewal error:", err);
+  }
+
   return NextResponse.json({
     ok: true,
     triggered: configs.length,
     results,
+    gmailWatches,
   });
 }

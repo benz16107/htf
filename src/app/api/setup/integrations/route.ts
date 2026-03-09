@@ -27,6 +27,6 @@ export async function POST(request: Request) {
   });
 
   const redirectTo = formData.get("redirectTo")?.toString();
-  const nextUrl = redirectTo === "dashboard" ? "/dashboard" : "/setup/high-level";
+  const nextUrl = redirectTo === "dashboard" ? "/dashboard?saved=integrations" : "/setup/high-level?saved=integrations";
   return NextResponse.redirect(new URL(nextUrl, origin));
 }

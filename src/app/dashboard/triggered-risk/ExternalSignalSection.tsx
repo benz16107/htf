@@ -151,6 +151,8 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
   const [confirmDelete, setConfirmDelete] = useState<null | { type: "one"; id: string } | { type: "all" }>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [configuredTools, setConfiguredTools] = useState<string[]>([]);
+  const [prefsDirty, setPrefsDirty] = useState(false);
+  const [prefsSavedAt, setPrefsSavedAt] = useState<number | null>(null);
   const mounted = useRef(true);
 
   const fetchToolSelections = useCallback(async () => {
@@ -268,6 +270,12 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
     pullFromWeb();
   };
 
+  const savePreferences = () => {
+    setStoredExternalConfig({ intervalMinutes });
+    setPrefsDirty(false);
+    setPrefsSavedAt(Date.now());
+  };
+
   const confirmDeleteOpen = confirmDelete !== null;
   const confirmDeleteTitle = confirmDelete?.type === "one" ? "Remove signal" : confirmDelete?.type === "all" ? "Remove all signals" : "";
   const confirmDeleteMessage =
@@ -362,12 +370,24 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
                     className={intervalMinutes === opt.value ? "btn primary btn-sm" : "btn secondary btn-sm"}
                     onClick={() => {
                       setIntervalMinutes(opt.value);
-                      setStoredExternalConfig({ intervalMinutes: opt.value });
+                      setPrefsDirty(true);
+                      setPrefsSavedAt(null);
                     }}
                   >
                     {opt.label}
                   </button>
                 ))}
+              </div>
+              <div className="row gap-xs" style={{ marginTop: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn primary btn-sm"
+                  onClick={savePreferences}
+                  disabled={!prefsDirty}
+                >
+                  Save preferences
+                </button>
+                {prefsSavedAt ? <span className="text-xs muted">Saved</span> : null}
               </div>
               <p className="text-sm font-medium" style={{ margin: "0.75rem 0 0 0" }}>Input context tools</p>
               <p className="text-xs muted" style={{ margin: "0.25rem 0 0 0" }}>Tools used for external signal context. Manage in Dashboard → Integrations.</p>

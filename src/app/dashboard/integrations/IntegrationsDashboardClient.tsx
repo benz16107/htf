@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { AnimeStagger } from "@/components/AnimeStagger";
+import { DirectEmailConnectionCard } from "@/components/DirectEmailConnectionCard";
+import { StatusBanner } from "@/components/StatusBanner";
 import { SuggestedIntegrationsBox } from "@/components/SuggestedIntegrationsBox";
 import { ZapierMcpEmbed } from "@/components/ZapierMcpEmbed";
 import { getSuggestedZoneForTool, getSuggestedZoneLabel, groupToolsByApp } from "@/lib/integration-tool-hint";
@@ -22,6 +25,12 @@ export default function IntegrationsDashboardClient({
   const [inputContext, setInputContext] = useState<Set<string>>(new Set(initialInputContextTools));
   const [execution, setExecution] = useState<Set<string>>(new Set(initialExecutionTools));
   const [isLocalhost, setIsLocalhost] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<{
+    variant: "info" | "success" | "error";
+    title: string;
+    message?: string;
+  } | null>(null);
 
   useEffect(() => {
     const h = window.location.hostname;
@@ -64,18 +73,64 @@ export default function IntegrationsDashboardClient({
 
   const embedId = process.env.NEXT_PUBLIC_ZAPIER_MCP_EMBED_ID as string;
 
+  const handleSave = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setIsSaving(true);
+    setSaveStatus({
+      variant: "info",
+      title: "Saving integration assignments",
+      message: "Updating which tools the agent can use for context and execution.",
+    });
+
+    try {
+      const formData = new FormData();
+      for (const tool of inputContext) formData.append("inputContextTools", tool);
+      for (const tool of execution) formData.append("executionTools", tool);
+
+      const res = await fetch("/api/dashboard/integrations", {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: formData,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Could not save integrations.");
+      }
+
+      setSaveStatus({
+        variant: "success",
+        title: "Integrations saved",
+        message: "Your tool role assignments are ready for the agent to use.",
+      });
+    } catch (error) {
+      setSaveStatus({
+        variant: "error",
+        title: "Could not save integrations",
+        message: error instanceof Error ? error.message : "Please try again.",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
-    <div className="stack-lg" style={{ maxWidth: "none" }}>
-      <SuggestedIntegrationsBox
-        mcpTools={mcpTools}
-        onApply={({ inputContextTools, executionTools }) => {
-          setInputContext((prev) => new Set([...prev, ...inputContextTools]));
-          setExecution((prev) => new Set([...prev, ...executionTools]));
-        }}
-      />
+    <AnimeStagger className="stack-lg" style={{ maxWidth: "none" }} itemSelector="[data-animate-section]" delayStep={85}>
+      <div data-animate-section>
+        <SuggestedIntegrationsBox
+          mcpTools={mcpTools}
+          onApply={({ inputContextTools, executionTools }) => {
+            setInputContext((prev) => new Set([...prev, ...inputContextTools]));
+            setExecution((prev) => new Set([...prev, ...executionTools]));
+          }}
+        />
+      </div>
+
+      <div data-animate-section>
+        <DirectEmailConnectionCard />
+      </div>
 
       {embedId && (
-        <section className="card stack">
+        <section className="card stack" data-animate-section>
           <h3>Connect Zapier (MCP)</h3>
           {isLocalhost ? (
             <div className="card-flat stack-sm text-sm">
@@ -97,14 +152,14 @@ export default function IntegrationsDashboardClient({
         </section>
       )}
 
-      <section className="integrations-zones">
+      <section className="integrations-zones" data-animate-section>
         <h3 className="integrations-zones__title">Assign tools to roles</h3>
         <p className="muted text-sm integrations-zones__subtitle">Input context = gather data. Execution = take action.</p>
 
         {toolsLoading ? (
           <p className="muted text-sm">Loading tools…</p>
         ) : mcpTools.length > 0 ? (
-          <form action="/api/dashboard/integrations" method="post" className="stack">
+          <form onSubmit={handleSave} className="stack">
             <div className="integrations-zones__grid">
               <div className="card integrations-zone">
                 <div className="integrations-zone__header">
@@ -280,8 +335,11 @@ export default function IntegrationsDashboardClient({
             {Array.from(execution).map((c) => (
               <input key={`ex-${c}`} type="hidden" name="executionTools" value={c} />
             ))}
+            {saveStatus ? <StatusBanner variant={saveStatus.variant} title={saveStatus.title} message={saveStatus.message} /> : null}
             <div className="row" style={{ marginTop: "0.5rem" }}>
-              <button type="submit" className="btn primary btn-sm">Save</button>
+              <button type="submit" className="btn primary btn-sm" disabled={isSaving}>
+                {isSaving ? "Saving…" : "Save"}
+              </button>
               <Link className="btn secondary btn-sm" href="/dashboard">Back to dashboard</Link>
             </div>
           </form>
@@ -292,7 +350,9 @@ export default function IntegrationsDashboardClient({
         )}
       </section>
 
-      <Link href="/setup/integrations" className="btn secondary btn-sm">Full setup workflow</Link>
-    </div>
+      <div data-animate-section>
+        <Link href="/setup/integrations" className="btn secondary btn-sm">Full setup workflow</Link>
+      </div>
+    </AnimeStagger>
   );
 }

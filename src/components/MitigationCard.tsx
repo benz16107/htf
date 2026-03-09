@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { AnimatedAutoHeight } from "@/components/AnimatedAutoHeight";
+import { AnimeStagger } from "@/components/AnimeStagger";
 import { ConfirmModal } from "@/components/ConfirmModal";
 
 /** Probability may be stored as 0–1 or 0–100; return 0–100 for display */
@@ -25,9 +27,41 @@ function formatPercent01Or100(n: number | null | undefined): string {
   return `${pct.toFixed(1)}%`;
 }
 
-type MitigationCardProps = { riskCase: any; archived?: boolean; /** For active cards: only first should be true so first is expanded by default */ defaultExpanded?: boolean };
+function formatDeferredAt(value: string | Date | null | undefined): string {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString();
+}
 
-export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded = true }: MitigationCardProps) {
+function formatActionPayload(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+type MitigationCardProps = {
+  riskCase: any;
+  archived?: boolean;
+  /** For active cards: only first should be true so first is expanded by default */
+  defaultExpanded?: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectedChange?: (selected: boolean) => void;
+};
+
+export function MitigationCard({
+  riskCase: rc,
+  archived = false,
+  defaultExpanded = true,
+  selectable = false,
+  selected = false,
+  onSelectedChange,
+}: MitigationCardProps) {
   const router = useRouter();
   const [archivedExpanded, setArchivedExpanded] = useState(false);
   const [activeExpanded, setActiveExpanded] = useState(defaultExpanded);
@@ -197,7 +231,7 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
     setEditForm({
       stepTitle: action.stepTitle ?? "",
       recipientOrEndpoint: action.recipientOrEndpoint ?? "",
-      payloadOrBody: action.payloadOrBody ?? "",
+      payloadOrBody: formatActionPayload(action.payloadOrBody),
     });
   };
 
@@ -254,13 +288,14 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
   };
 
   const isExecuted = draftedPlan?.status === "EXECUTED";
+  const isExpanded = archived ? archivedExpanded : activeExpanded;
   /** Current case with a draft plan waiting for user to Approve & Fire — show warning so user knows confirmation is needed */
   const needsConfirmation = !archived && !!draftedPlan && draftedPlan.status !== "EXECUTED";
+  const deferredReason = draftedPlan?.autonomousExecutionDeferred ?? null;
 
   const isSuggestionType = (type: string) => type === "insight" || type === "recommendation";
   const totalExecutable = actions.filter((a: any) => !isSuggestionType(a?.type)).length;
   const executableCount = actions.filter((a: any, i: number) => selectedActionIndices.has(i) && !isSuggestionType(a?.type)).length;
-  const selectedCount = selectedActionIndices.size;
 
   return (
     <>
@@ -288,6 +323,7 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
       />
       <section
         className="card stack-lg"
+        data-animate-item
         style={{
           opacity: isExecuted ? 0.75 : 1,
           ...(needsConfirmation && {
@@ -301,7 +337,7 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
         className="row"
         style={{
           justifyContent: "space-between",
-          borderBottom: (archived && !archivedExpanded) || (!archived && !activeExpanded) ? "none" : "1px solid var(--border)",
+          borderBottom: !isExpanded ? "none" : "1px solid var(--border)",
           paddingBottom: "1rem",
           cursor: "pointer",
           alignItems: "center",
@@ -310,10 +346,26 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
         role="button"
         tabIndex={0}
         onKeyDown={(ev) => ev.key === "Enter" && (archived ? setArchivedExpanded((e) => !e) : setActiveExpanded((e) => !e))}
-        aria-expanded={archived ? archivedExpanded : activeExpanded}
+        aria-expanded={isExpanded}
       >
         <div className="row" style={{ alignItems: "center", gap: "0.5rem", minWidth: 0, flex: 1 }}>
-          <span className="muted" style={{ fontSize: "0.875rem", transform: (archived ? archivedExpanded : activeExpanded) ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} aria-hidden>
+          {selectable && (
+            <label
+              className="row"
+              style={{ alignItems: "center", gap: "0.35rem", cursor: "pointer", flexShrink: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <input
+                type="checkbox"
+                checked={selected}
+                onChange={(e) => onSelectedChange?.(e.target.checked)}
+                aria-label={`Select ${rc.triggerType?.toLowerCase?.() ?? "mitigation"} plan`}
+              />
+              <span className="text-xs muted">Select</span>
+            </label>
+          )}
+          <span className="muted" style={{ fontSize: "0.875rem", transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} aria-hidden>
             &gt;
           </span>
           <div>
@@ -369,8 +421,8 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
         </div>
       </div>
 
-      {((archived && archivedExpanded) || (!archived && activeExpanded)) && (
-        <>
+      <AnimatedAutoHeight open={isExpanded}>
+        <div className="stack-lg" style={{ paddingTop: "1rem" }}>
       {/* Assessed risk: description from signals (what's going on) */}
       {rc.entityMap && typeof rc.entityMap === "object" && (() => {
         const em = rc.entityMap as Record<string, unknown>;
@@ -501,13 +553,17 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
       {!isExecuted && (
         <div className="stack">
           <h4>Trade-off Scenarios</h4>
-          <div className="scenario-cards-grid">
+          <AnimeStagger
+            className="scenario-cards-grid"
+            play={isExpanded}
+            playKey={`${String(rc.id)}-${draftedPlan?.id ?? "no-draft"}-${String(isExpanded)}`}
+          >
             {rc.scenarios?.map((s: any) => {
               const rec = s.recommendation === "RECOMMENDED";
               const assumptions = s.assumptions;
               const assumptionList = Array.isArray(assumptions) ? assumptions : typeof assumptions === "string" ? [assumptions] : [];
               return (
-                <div key={s.id} className={`scenario-card${rec ? " recommended" : ""}`}>
+                <div key={s.id} className={`scenario-card${rec ? " recommended" : ""}`} data-animate-item>
                   {rec && <span className="badge accent" style={{ alignSelf: "flex-start" }}>AI Pick</span>}
                   <h4>{s.name}</h4>
                   {Array.isArray(s.planOutline) && s.planOutline.length > 0 && (
@@ -564,7 +620,7 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
                 </div>
               );
             })}
-          </div>
+          </AnimeStagger>
         </div>
       )}
 
@@ -591,13 +647,41 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
           </h4>
           {draftedPlan.summary && <p className="muted text-sm" style={{ margin: 0 }}>{draftedPlan.summary}</p>}
 
+          {!isExecuted && deferredReason?.summary && (
+            <div
+              className="card-flat stack-xs"
+              style={{
+                padding: "0.75rem 1rem",
+                background: "var(--warning-soft)",
+                borderLeft: "3px solid var(--warning)",
+              }}
+            >
+              <p className="text-sm" style={{ margin: 0, color: "var(--warning)" }}>
+                {deferredReason.summary}
+              </p>
+              {deferredReason?.createdAt && (
+                <p className="text-xs muted" style={{ margin: 0 }}>
+                  Logged {formatDeferredAt(deferredReason.createdAt)}.
+                </p>
+              )}
+            </div>
+          )}
+
           <p className="text-sm muted" style={{ margin: 0 }}>
             {!isExecuted ? "Insights and recommendations are suggestions only. Select which executable steps to run (email, Zapier, etc.), then Approve & Fire." : "Actions that were executed."}
           </p>
 
-          <div className="stack-sm">
+          <AnimeStagger
+            className="stack-sm"
+            play={isExpanded}
+            playKey={`${draftedPlan?.id ?? "no-draft"}-${actions.length}-${String(isExpanded)}`}
+            delayStep={45}
+            duration={420}
+            translateY={10}
+            scale={0.992}
+          >
             {actions.map((action: any, idx: number) => (
-              <div key={idx} className="trace-row" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+              <div key={idx} className="trace-row" style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }} data-animate-item>
                 {editingIdx === idx && editForm ? (
                   <div className="stack-sm" style={{ padding: "0.75rem", background: "var(--bg-soft)", borderRadius: "var(--radius)" }}>
                     <label className="stack-xs" style={{ margin: 0 }}>
@@ -682,7 +766,7 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
                           <p className="text-xs muted" style={{ margin: "0.2rem 0 0 0" }}>To: {action.recipientOrEndpoint}</p>
                         )}
                         <div className="trace-body text-sm" style={{ marginTop: "0.25rem", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                          {action.payloadOrBody}
+                          {formatActionPayload(action.payloadOrBody)}
                         </div>
                       </div>
                     </div>
@@ -690,7 +774,7 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
                 )}
               </div>
             ))}
-          </div>
+          </AnimeStagger>
 
           {!isExecuted && (
             <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
@@ -713,8 +797,8 @@ export function MitigationCard({ riskCase: rc, archived = false, defaultExpanded
           )}
         </div>
       )}
-        </>
-      )}
+        </div>
+      </AnimatedAutoHeight>
     </section>
     </>
   );

@@ -1,19 +1,29 @@
 import { AppHeader } from "@/components/AppHeader";
+import { AnimatedCounter } from "@/components/AnimatedCounter";
+import { AnimeStagger } from "@/components/AnimeStagger";
+import { StatusBanner } from "@/components/StatusBanner";
 import { getSession } from "@/lib/auth";
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { OverviewActivityHead } from "./OverviewActivityHead";
 import { OverviewAutonomousToggle } from "./OverviewAutonomousToggle";
+import { OverviewReceivedSignals } from "./OverviewReceivedSignals";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardHomePage() {
+export default async function DashboardHomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ saved?: string }>;
+}) {
   const session = await getSession();
+  const { saved } = await searchParams;
 
   let companyName = "Your Company";
   let pendingMitigations = 0;
   let activeRiskCases = 0;
   let automationLevel = "off";
+  let signalSources: "internal_only" | "external_only" | "both" = "both";
   let lastRun: {
     runId: string;
     processed: number;
@@ -47,9 +57,12 @@ export default async function DashboardHomePage() {
 
     const config = await db.autonomousAgentConfig.findUnique({
       where: { companyId: session.companyId },
-      select: { automationLevel: true },
+      select: { automationLevel: true, signalSources: true },
     });
     if (config?.automationLevel) automationLevel = config.automationLevel;
+    if (config?.signalSources === "internal_only" || config?.signalSources === "external_only") {
+      signalSources = config.signalSources;
+    }
 
     try {
       const completed = await db.autonomousAgentLog.findFirst({
@@ -93,16 +106,38 @@ export default async function DashboardHomePage() {
   return (
     <div className="overview-page stack-xl">
       <AppHeader title={companyName} />
+      {saved === "baselayer" ? (
+        <StatusBanner
+          variant="success"
+          title="Base profile saved"
+          message="Your company profile changes were saved and are now reflected in the dashboard."
+        />
+      ) : null}
+      {saved === "integrations" ? (
+        <StatusBanner
+          variant="success"
+          title="Integrations saved"
+          message="Your tool assignments were saved and are ready for the agent to use."
+        />
+      ) : null}
+      {saved === "high-level" ? (
+        <StatusBanner
+          variant="success"
+          title="High-level profile saved"
+          message="Your latest setup edits are saved and available across the dashboard."
+        />
+      ) : null}
 
-      <div className="overview-metrics">
+      <AnimeStagger className="overview-metrics">
         <Link
           href="/dashboard/plans"
           className="overview-metric"
           data-status={activeRiskCases > 0 ? "attention" : "ok"}
+          data-animate-item
         >
           <span className="overview-metric__label">Active risk cases</span>
           <span className="overview-metric__value" data-status={activeRiskCases > 0 ? "attention" : "ok"}>
-            {activeRiskCases}
+            <AnimatedCounter value={activeRiskCases} />
           </span>
           <span className="overview-metric__note">{activeRiskCases > 0 ? "Open" : "None"}</span>
         </Link>
@@ -110,10 +145,11 @@ export default async function DashboardHomePage() {
           href="/dashboard/plans"
           className="overview-metric"
           data-status={pendingMitigations > 0 ? "pending" : "neutral"}
+          data-animate-item
         >
           <span className="overview-metric__label">Pending approvals</span>
           <span className="overview-metric__value" data-status={pendingMitigations > 0 ? "pending" : "neutral"}>
-            {pendingMitigations}
+            <AnimatedCounter value={pendingMitigations} />
           </span>
           <span className="overview-metric__note">{pendingMitigations > 0 ? "Awaiting approval" : "No drafts"}</span>
         </Link>
@@ -121,6 +157,7 @@ export default async function DashboardHomePage() {
           href="/dashboard/triggered-risk"
           className="overview-metric"
           data-status="neutral"
+          data-animate-item
         >
           <span className="overview-metric__label">Signals &amp; risk</span>
           <span className="overview-metric__value overview-metric__value--text" data-status="neutral">
@@ -128,11 +165,13 @@ export default async function DashboardHomePage() {
           </span>
           <span className="overview-metric__note">Signals &amp; impact</span>
         </Link>
-        <OverviewAutonomousToggle initialLevel={automationLevel} />
-      </div>
+        <div data-animate-item>
+          <OverviewAutonomousToggle initialLevel={automationLevel} />
+        </div>
+      </AnimeStagger>
 
-      <div className="overview-main">
-        <section className="card overview-activity">
+      <AnimeStagger className="overview-main" itemSelector="[data-animate-panel]" delayStep={110}>
+        <section className="card overview-activity" data-animate-panel>
           <OverviewActivityHead />
           {lastRun ? (
             <div className="overview-activity__run" style={{ padding: "1.25rem" }}>
@@ -170,7 +209,7 @@ export default async function DashboardHomePage() {
           )}
         </section>
 
-        <aside className="overview-sidebar">
+        <aside className="overview-sidebar" data-animate-panel>
           <section className="card overview-cta">
             <h3 className="overview-cta__title" style={{ margin: 0 }}>Quick actions</h3>
             <div className="stack-sm" style={{ marginTop: "0.75rem" }}>
@@ -186,6 +225,10 @@ export default async function DashboardHomePage() {
             </div>
           </section>
         </aside>
+      </AnimeStagger>
+
+      <div>
+        <OverviewReceivedSignals signalSources={signalSources} />
       </div>
     </div>
   );

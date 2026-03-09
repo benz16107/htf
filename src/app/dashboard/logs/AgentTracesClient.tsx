@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { AnimatedAutoHeight } from "@/components/AnimatedAutoHeight";
+import { AnimeStagger } from "@/components/AnimeStagger";
 import { ConfirmModal } from "@/components/ConfirmModal";
 
 const POLL_INTERVAL_MS = 2000;
@@ -116,13 +118,36 @@ function groupEntriesByCase(entries: LogEntry[]): {
   return { runLevel, caseGroups };
 }
 
+function collectSignals(entries: LogEntry[]): {
+  internal: SignalExpanded[];
+  external: SignalExpanded[];
+} {
+  const internal = new Map<string, SignalExpanded>();
+  const external = new Map<string, SignalExpanded>();
+
+  for (const entry of entries) {
+    if (!entry.signal) continue;
+    const key = entry.signalId ?? `${entry.signal.type}:${entry.summary ?? entry.id}`;
+    if (entry.signal.type === "internal") {
+      if (!internal.has(key)) internal.set(key, entry.signal);
+      continue;
+    }
+    if (!external.has(key)) external.set(key, entry.signal);
+  }
+
+  return {
+    internal: [...internal.values()],
+    external: [...external.values()],
+  };
+}
+
 export function AgentTracesClient() {
   const [runLogs, setRunLogs] = useState<RunLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set());
-  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
-  const [confirmDeleteRunId, setConfirmDeleteRunId] = useState<string | null>(null);
+  const [deletingAllRuns, setDeletingAllRuns] = useState(false);
+  const [confirmDeleteAllRuns, setConfirmDeleteAllRuns] = useState(false);
   const [deletingCaseId, setDeletingCaseId] = useState<string | null>(null);
   const [confirmDeleteCaseId, setConfirmDeleteCaseId] = useState<string | null>(null);
 
@@ -143,17 +168,22 @@ export function AgentTracesClient() {
     }
   };
 
-  const deleteRun = async (runId: string) => {
-    if (deletingRunId) return;
-    setDeletingRunId(runId);
+  const deleteAllRuns = async () => {
+    if (deletingAllRuns) return;
+    setDeletingAllRuns(true);
     try {
-      const res = await fetch(`/api/agents/autonomous/logs?runId=${encodeURIComponent(runId)}`, { method: "DELETE" });
+      const res = await fetch("/api/agents/autonomous/logs?all=true", { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setConfirmDeleteRunId(null);
-        await fetchLogs();
+        setConfirmDeleteAllRuns(false);
+        setError(null);
+        setExpandedCases(new Set());
+        setRunLogs([]);
+      } else {
+        setError(data.error || "Failed to delete all history");
       }
     } finally {
-      setDeletingRunId(null);
+      setDeletingAllRuns(false);
     }
   };
 
@@ -201,17 +231,17 @@ export function AgentTracesClient() {
   }
 
   return (
-    <>
+    <AnimeStagger className="stack-lg" itemSelector="[data-animate-section]" delayStep={90}>
       <ConfirmModal
-        open={confirmDeleteRunId !== null}
-        title="Delete all"
-        message="Clear this run from history? This cannot be undone."
-        confirmLabel="Delete all"
+        open={confirmDeleteAllRuns}
+        title="Delete all history"
+        message="Clear all autonomous agent runs from history? This cannot be undone."
+        confirmLabel="Delete all history"
         cancelLabel="Cancel"
         variant="danger"
-        loading={deletingRunId === confirmDeleteRunId}
-        onConfirm={() => confirmDeleteRunId && deleteRun(confirmDeleteRunId)}
-        onCancel={() => setConfirmDeleteRunId(null)}
+        loading={deletingAllRuns}
+        onConfirm={deleteAllRuns}
+        onCancel={() => setConfirmDeleteAllRuns(false)}
       />
       <ConfirmModal
         open={confirmDeleteCaseId !== null}
@@ -225,12 +255,12 @@ export function AgentTracesClient() {
         onCancel={() => setConfirmDeleteCaseId(null)}
       />
       {error && (
-        <div className="card-flat" style={{ padding: "0.6rem 1rem", background: "var(--danger-soft)", color: "var(--danger)" }}>
+        <div className="card-flat" style={{ padding: "0.6rem 1rem", background: "var(--danger-soft)", color: "var(--danger)" }} data-animate-section>
           {error}
         </div>
       )}
       {runLogs.length === 0 ? (
-        <section className="card stack">
+        <section className="card stack" data-animate-section>
           <div className="empty-state" style={{ padding: "2.25rem 1.25rem" }}>
             <h3 style={{ margin: 0 }}>No autonomous activity yet</h3>
             <p className="muted" style={{ margin: "0.5rem 0 0 0" }}>
@@ -239,7 +269,7 @@ export function AgentTracesClient() {
           </div>
         </section>
       ) : (
-        <div className="stack-lg">
+        <div className="stack-lg" data-animate-section>
           <div className="row between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
             <p className="text-xs muted" style={{ margin: 0 }}>
               Auto-refreshes every {POLL_INTERVAL_MS / 1000}s · Expand each risk case to see signal, assessment, draft, and execution
@@ -248,7 +278,17 @@ export function AgentTracesClient() {
               <button
                 type="button"
                 className="btn secondary btn-xs"
+                onClick={() => setConfirmDeleteAllRuns(true)}
+                disabled={deletingAllRuns}
+                title="Clear all autonomous agent runs from history"
+              >
+                {deletingAllRuns ? "Deleting…" : "Delete all history"}
+              </button>
+              <button
+                type="button"
+                className="btn secondary btn-xs"
                 onClick={() => setExpandedCases(new Set(runLogs.flatMap((r) => [...groupEntriesByCase(r.entries).caseGroups.keys()])))}
+                disabled={deletingAllRuns}
               >
                 Expand all cases
               </button>
@@ -256,49 +296,50 @@ export function AgentTracesClient() {
                 type="button"
                 className="btn secondary btn-xs"
                 onClick={() => setExpandedCases(new Set())}
+                disabled={deletingAllRuns}
               >
                 Collapse all cases
               </button>
             </div>
           </div>
-          {(() => {
-            const latestRun = [...runLogs].sort((a, b) => {
-              const aMax = Math.max(...a.entries.map((e) => new Date(e.createdAt).getTime()));
-              const bMax = Math.max(...b.entries.map((e) => new Date(e.createdAt).getTime()));
-              return bMax - aMax;
-            })[0];
-            const runsToShow = latestRun ? [latestRun] : [];
+          <AnimeStagger className="stack-lg" playKey={runLogs.map((run) => run.runId).join(",")}>
+            {(() => {
+            const mergedEntries = runLogs
+              .filter((run) => Array.isArray(run.entries) && run.entries.length > 0)
+              .flatMap((run) => run.entries)
+              .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+            const runsToShow = mergedEntries.length > 0 ? [{ runId: "combined", entries: mergedEntries }] : [];
+            const sourceRunCount = new Set(runLogs.map((run) => run.runId)).size;
             return runsToShow.map(({ runId, entries }) => {
             const { runLevel, caseGroups } = groupEntriesByCase(entries);
+            const { internal: internalSignals, external: externalSignals } = collectSignals(entries);
             const caseGroupsWithCase = [...caseGroups.entries()].filter(([, caseEntries]) =>
               caseEntries.some((e) => e.riskCase)
             );
             const runLevelFiltered = runLevel.filter(
               (log) => log.actionType !== "run_started" && log.actionType !== "run_completed"
             );
+            const startedAt = entries[0]?.createdAt;
+            const completedAt = entries[entries.length - 1]?.createdAt;
             return (
-              <section key={runId} className="card stack collapsible-card">
+              <section key={runId} className="card stack collapsible-card" data-animate-item>
                 <div className="collapsible-card__header" style={{ cursor: "default" }}>
                   <div className="collapsible-card__title">
-                    <h3 style={{ margin: 0 }}>Run</h3>
+                    <h3 style={{ margin: 0 }}>Cases</h3>
                     <span className="badge accent">{caseGroupsWithCase.length} risk case(s)</span>
-                  </div>
-                  <div className="collapsible-card__header-actions">
-                    <button
-                      type="button"
-                      className="btn secondary btn-sm"
-                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteRunId(runId); }}
-                      disabled={deletingRunId === runId}
-                      title="Clear this run from history"
-                    >
-                      {deletingRunId === runId ? "…" : "Delete all"}
-                    </button>
+                    <span className="muted text-xs">Merged from {sourceRunCount} run(s)</span>
+                    {startedAt ? (
+                      <span className="muted text-xs">
+                        Started {new Date(startedAt).toLocaleString()}
+                        {completedAt ? ` · Last event ${new Date(completedAt).toLocaleString()}` : ""}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
                 <div className="stack-sm collapsible-card__body">
                   {runLevelFiltered.length > 0 && (
                     <div className="stack-xs" style={{ marginBottom: "0.75rem" }}>
-                      <p className="text-xs uppercase muted" style={{ margin: 0 }}>Run</p>
+                      <p className="text-xs uppercase muted" style={{ margin: 0 }}>Cases</p>
                       {runLevelFiltered.map((log) => (
                         <div key={log.id} className="trace-row row between gap-sm" style={{ alignItems: "center", flexWrap: "wrap" }}>
                           <div className="row gap-2xs" style={{ minWidth: 0, flexWrap: "wrap" }}>
@@ -317,6 +358,74 @@ export function AgentTracesClient() {
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {(internalSignals.length > 0 || externalSignals.length > 0) && (
+                    <div className="stack-sm" style={{ marginBottom: "0.75rem" }}>
+                      <p className="text-xs uppercase muted" style={{ margin: 0 }}>Incoming signals</p>
+                      <div
+                        className="stack-sm"
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns:
+                            internalSignals.length > 0 && externalSignals.length > 0
+                              ? "repeat(2, minmax(0, 1fr))"
+                              : "minmax(0, 1fr)",
+                          alignItems: "start",
+                        }}
+                      >
+                        {externalSignals.length > 0 && (
+                          <div className="card-flat stack-sm" style={{ padding: "0.9rem 1rem" }}>
+                            <div className="row between gap-xs" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                              <h4 className="text-sm font-semibold" style={{ margin: 0 }}>External signals</h4>
+                              <span className="badge">{externalSignals.length}</span>
+                            </div>
+                            <div className="stack-xs">
+                              {externalSignals.slice(0, 4).map((signal, index) => (
+                                <div key={`${signal.type}-${index}`} className="stack-2xs">
+                                  <p className="text-sm" style={{ margin: 0 }}>
+                                    {signal.title?.trim() || "External signal"}
+                                  </p>
+                                  <p className="text-xs muted" style={{ margin: 0 }}>
+                                    {signal.source || "External source"}
+                                  </p>
+                                </div>
+                              ))}
+                              {externalSignals.length > 4 && (
+                                <p className="text-xs muted" style={{ margin: 0 }}>
+                                  +{externalSignals.length - 4} more external signal(s)
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {internalSignals.length > 0 && (
+                          <div className="card-flat stack-sm" style={{ padding: "0.9rem 1rem" }}>
+                            <div className="row between gap-xs" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                              <h4 className="text-sm font-semibold" style={{ margin: 0 }}>Internal signals</h4>
+                              <span className="badge">{internalSignals.length}</span>
+                            </div>
+                            <div className="stack-xs">
+                              {internalSignals.slice(0, 4).map((signal, index) => (
+                                <div key={`${signal.type}-${index}`} className="stack-2xs">
+                                  <p className="text-sm" style={{ margin: 0 }}>
+                                    {signal.signalSummary?.trim() || "Internal signal"}
+                                  </p>
+                                  <p className="text-xs muted" style={{ margin: 0 }}>
+                                    {[signal.source, signal.toolName].filter(Boolean).join(" · ") || "Internal source"}
+                                  </p>
+                                </div>
+                              ))}
+                              {internalSignals.length > 4 && (
+                                <p className="text-xs muted" style={{ margin: 0 }}>
+                                  +{internalSignals.length - 4} more internal signal(s)
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -342,15 +451,21 @@ export function AgentTracesClient() {
                     const hasDrafted = caseEntries.some((e) => e.actionType === "plan_drafted");
                     const hasExecuted = caseEntries.some((e) => e.actionType === "plan_executed");
                     const riskCase = caseEntries.map((e) => e.riskCase).find(Boolean);
-                    const plans = caseEntries
-                      .filter((e) => e.plan)
-                      .map((e) => e.plan!);
+                    const plans = Array.from(
+                      new Map(
+                        caseEntries
+                          .filter((e) => e.plan)
+                          .map((e) => [e.plan!.id, e.plan!])
+                      ).values()
+                    );
                     const executedPlans = plans.filter((p) => p.status === "EXECUTED");
                     const executedActions = executedPlans.flatMap((p) => (Array.isArray(p.actions) ? (p.actions as { stepTitle?: string; type?: string }[]) : []));
                     const executionBullets = executedActions
                       .map((a) => a.stepTitle?.trim() || a.type || "Step")
                       .filter(Boolean);
-                    const planIds = caseEntries.filter((e) => e.planId).map((e) => e.planId!);
+                    const planIds = Array.from(
+                      new Set(caseEntries.filter((e) => e.planId).map((e) => e.planId!))
+                    );
                     const latestPlanId = planIds[planIds.length - 1];
                     const isOpen = expandedCases.has(riskCaseId);
 
@@ -416,10 +531,19 @@ export function AgentTracesClient() {
                             {isOpen ? "▼" : "▶"}
                           </span>
                         </button>
-                        {isOpen && (
-                          <div className="stack-sm" style={{ padding: "0 1rem 1rem 1rem", borderTop: "1px solid var(--border)" }}>
+                        <AnimatedAutoHeight open={isOpen}>
+                          <AnimeStagger
+                            className="stack-sm"
+                            style={{ padding: "1rem" }}
+                            play={isOpen}
+                            playKey={`${riskCaseId}-${plans.length}-${executionBullets.length}`}
+                            delayStep={45}
+                            duration={360}
+                            translateY={10}
+                            scale={0.992}
+                          >
                             {signal && (
-                              <div className="card-flat stack-xs" style={{ padding: "0.75rem 1rem" }}>
+                              <div className="card-flat stack-xs" style={{ padding: "0.75rem 1rem", borderTop: "1px solid var(--border)" }} data-animate-item>
                                 <h4 className="text-sm font-semibold" style={{ margin: 0 }}>Signal</h4>
                                 {signal.type === "internal" ? (
                                   <>
@@ -453,7 +577,7 @@ export function AgentTracesClient() {
                               </div>
                             )}
                             {riskCase && (
-                              <div className="card-flat stack-sm" style={{ padding: "0.75rem 1rem" }}>
+                              <div className="card-flat stack-sm" style={{ padding: "0.75rem 1rem" }} data-animate-item>
                                 <h4 className="text-sm font-semibold" style={{ margin: 0 }}>Risk assessment</h4>
                                 <div className="row gap-xs" style={{ alignItems: "center", flexWrap: "wrap", margin: "0.2rem 0 0 0" }}>
                                   <p className="text-sm font-medium" style={{ margin: 0 }}>{riskCase.triggerType}</p>
@@ -552,7 +676,7 @@ export function AgentTracesClient() {
                               </div>
                             )}
                             {plans.map((plan) => (
-                              <div key={plan.id} className="card-flat stack-sm" style={{ padding: "0.75rem 1rem" }}>
+                              <div key={plan.id} className="card-flat stack-sm" style={{ padding: "0.75rem 1rem" }} data-animate-item>
                                 <h4 className="text-sm font-semibold" style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
                                   Mitigation plan {plan.status === "EXECUTED" ? "(executed)" : plan.status === "DRAFTED" ? "(draft)" : `(${plan.status})`}
                                   {plan.createdByAutonomousAgent && (
@@ -595,7 +719,7 @@ export function AgentTracesClient() {
                               </div>
                             ))}
                             {executionBullets.length > 0 && (
-                              <div className="card-flat stack-xs" style={{ padding: "0.75rem 1rem" }}>
+                              <div className="card-flat stack-xs" style={{ padding: "0.75rem 1rem" }} data-animate-item>
                                 <h4 className="text-sm font-semibold" style={{ margin: 0 }}>Execution summary</h4>
                                 <p className="text-xs muted" style={{ margin: "0.2rem 0 0 0" }}>What was executed for this case:</p>
                                 <ul className="text-sm stack-2xs" style={{ margin: "0.35rem 0 0 0", paddingLeft: "1.25rem", listStyle: "disc" }}>
@@ -605,7 +729,7 @@ export function AgentTracesClient() {
                                 </ul>
                               </div>
                             )}
-                            <div className="trace-actions row gap-xs" style={{ flexWrap: "wrap" }}>
+                            <div className="trace-actions row gap-xs" style={{ flexWrap: "wrap" }} data-animate-item>
                               <Link href={`/dashboard/plans?case=${riskCaseId}`} className="btn link btn-xs">
                                 View risk case
                               </Link>
@@ -629,8 +753,8 @@ export function AgentTracesClient() {
                                 </button>
                               )}
                             </div>
-                          </div>
-                        )}
+                          </AnimeStagger>
+                        </AnimatedAutoHeight>
                       </div>
                     );
                   })}
@@ -639,8 +763,9 @@ export function AgentTracesClient() {
             );
           });
           })()}
+          </AnimeStagger>
         </div>
       )}
-    </>
+    </AnimeStagger>
   );
 }

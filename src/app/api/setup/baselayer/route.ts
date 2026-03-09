@@ -136,6 +136,6 @@ export async function POST(request: Request) {
   }
 
   const redirectTo = formData.get("redirectTo")?.toString();
-  const nextUrl = redirectTo === "dashboard" ? "/dashboard" : "/setup/integrations";
+  const nextUrl = redirectTo === "dashboard" ? "/dashboard?saved=baselayer" : "/setup/integrations?saved=baselayer";
   return NextResponse.redirect(new URL(nextUrl, origin));
 }

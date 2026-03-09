@@ -54,6 +54,8 @@ export type RiskCaseOutput = {
 export type RunSignalRiskOptions = {
   /** When false, returns assessment only and does not create RiskCase/Scenarios. Default true. */
   createRiskCase?: boolean;
+  /** When false, skip extra live-context enrichment from Zapier/MCP tools. Default true. */
+  includeLiveContext?: boolean;
 };
 
 /** Normalize scenario metrics so UI can assume: costDelta = multiplier (1.15 = +15%), serviceImpact/riskReduction = 0–1. */
@@ -129,8 +131,9 @@ export async function runSignalRiskAgent(
   }
   const safeInput = { ...input, entityMap: entityMapStrings };
 
+  const includeLiveContext = options?.includeLiveContext !== false;
   const [liveContextFromZapier, toolSelections] = await Promise.all([
-    fetchLiveContextFromZapier(companyId, 4000),
+    includeLiveContext ? fetchLiveContextFromZapier(companyId, 4000) : Promise.resolve(""),
     getZapierMCPToolSelections(companyId),
   ]);
   const mcpSourceList = (toolSelections?.inputContextTools ?? []).join(", ");

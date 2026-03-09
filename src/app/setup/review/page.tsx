@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AnimeStagger } from "@/components/AnimeStagger";
 import { AppHeader } from "@/components/AppHeader";
+import { StatusBanner } from "@/components/StatusBanner";
 import { getSession } from "@/lib/auth";
 import { getCompanySetupSnapshot } from "@/server/company-setup";
 import { ConfirmSetupButton } from "./ConfirmSetupButton";
@@ -21,19 +23,35 @@ function DataList({ data }: { data: Record<string, string> | null }) {
   );
 }
 
-export default async function SetupReviewPage() {
+export default async function SetupReviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ saved?: string }>;
+}) {
   const session = await getSession();
   if (!session) redirect("/sign-in");
+  const { saved } = await searchParams;
 
   const snapshot = session.companyId
     ? await getCompanySetupSnapshot(session.companyId)
     : { baselayer: null, integrations: { inputContextTools: [], executionTools: [], connectors: [] }, highLevel: null };
 
   return (
-    <main className="container stack-xl">
-      <AppHeader title="Review setup" subtitle="Step 4 of 4" />
+    <AnimeStagger className="container stack-xl" itemSelector="[data-animate-section]" delayStep={85}>
+      <div data-animate-section>
+        <AppHeader title="Review setup" subtitle="Step 4 of 4" />
+      </div>
+      {saved === "high-level" ? (
+        <div data-animate-section>
+          <StatusBanner
+            variant="success"
+            title="High-level profile saved"
+            message="Setup data is up to date. Review everything below before entering the dashboard."
+          />
+        </div>
+      ) : null}
 
-      <section className="grid two" style={{ alignItems: "start" }}>
+      <section className="grid two" style={{ alignItems: "start" }} data-animate-section>
         <article className="card stack">
           <h3>Base profile</h3>
           <DataList data={snapshot.baselayer} />
@@ -71,7 +89,7 @@ export default async function SetupReviewPage() {
         </article>
       </section>
 
-      <section className="card stack">
+      <section className="card stack" data-animate-section>
         <h3>High-level profile</h3>
         <DataList data={snapshot.highLevel} />
 
@@ -84,6 +102,6 @@ export default async function SetupReviewPage() {
           <Link className="btn secondary btn-sm" href="/dashboard">Go to dashboard</Link>
         </div>
       </section>
-    </main>
+    </AnimeStagger>
   );
 }

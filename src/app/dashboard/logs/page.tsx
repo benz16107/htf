@@ -1,4 +1,5 @@
 import { AppHeader } from "@/components/AppHeader";
+import { AnimeStagger } from "@/components/AnimeStagger";
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -13,18 +14,22 @@ export default async function AgentTracesPage() {
   if (!session?.companyId) redirect("/sign-in");
 
   return (
-    <div className="stack-xl" style={{ maxWidth: 900 }}>
-      <AppHeader
-        title="Autonomous agent"
-        actions={
-          <Suspense fallback={<span className="text-sm muted">…</span>}>
-            <LogsPageHeaderActions />
-          </Suspense>
-        }
-      />
-      <AgentRunningVisualWrapper>
-        <AgentTracesClient />
-      </AgentRunningVisualWrapper>
-    </div>
+    <AnimeStagger className="stack-xl" style={{ maxWidth: 900 }} itemSelector="[data-animate-section]" delayStep={85}>
+      <div data-animate-section>
+        <AppHeader
+          title="Autonomous agent"
+          actions={
+            <Suspense fallback={<span className="text-sm muted">…</span>}>
+              <LogsPageHeaderActions />
+            </Suspense>
+          }
+        />
+      </div>
+      <div data-animate-section>
+        <AgentRunningVisualWrapper>
+          <AgentTracesClient />
+        </AgentRunningVisualWrapper>
+      </div>
+    </AnimeStagger>
   );
 }
