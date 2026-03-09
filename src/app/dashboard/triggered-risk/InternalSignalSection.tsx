@@ -808,6 +808,11 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
 
       {lastSyncTools && lastSyncTools.length > 0 && (
         <div className="text-xs muted" style={{ margin: "0 0.75rem 0.5rem" }}>
+          {(() => {
+            const hasErrors = lastSyncTools.some((t) => t.status === "error");
+            const allNoNewSignals = lastSyncTools.every((t) => t.status === "empty" || t.count === 0);
+            return (
+              <>
           <p style={{ margin: 0 }}>Last sync: {lastSyncTools.map((t) => {
             if (t.message) return `${t.name}: ${t.message}`;
             if (t.status === "error") return `${t.name}: error`;
@@ -817,9 +822,15 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
               : ` ${t.count} item${t.count !== 1 ? "s" : ""}`;
             return `${t.name}:${detail}`;
           }).join(" · ")}</p>
-          {lastSyncTools.every((t) => t.status === "empty" || t.status === "error" || t.count === 0) && (
+          {hasErrors && (
             <p style={{ margin: "0.35rem 0 0 0" }}>If Gmail is connected directly, reconnect or sync again. For other tools, ensure they are in <strong>Input context</strong> in Dashboard → Integrations.</p>
           )}
+          {!hasErrors && allNoNewSignals && (
+            <p style={{ margin: "0.35rem 0 0 0" }}>No new signals were found since the last sync.</p>
+          )}
+              </>
+            );
+          })()}
         </div>
       )}
 

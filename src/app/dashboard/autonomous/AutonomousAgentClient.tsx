@@ -168,6 +168,7 @@ export default function AutonomousAgentClient({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          agentRunning: config.automationLevel !== "off",
           automationLevel: config.automationLevel,
           signalSources: config.signalSources,
           internalSignalMode: config.internalSignalMode,

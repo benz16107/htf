@@ -487,7 +487,14 @@ export async function POST(req: Request) {
       const recentItems = await listRecentGmailMessages(session.companyId, 20);
       const parsedCount = recentItems.length;
       if (recentItems.length === 0) {
-        toolResults.push({ name: "gmail_direct", status: "empty", count: 0, rawCount: 0, parsedCount: 0, message: "No recent Gmail messages" });
+        toolResults.push({
+          name: "gmail_direct",
+          status: "empty",
+          count: 0,
+          rawCount: 0,
+          parsedCount: 0,
+          message: "No new Gmail messages since last sync",
+        });
       } else {
         const normalized = recentItems.map((item) => ({ summary: item.summary, raw: item.raw }));
         const riskFlags = await classifyRiskRelevance(normalized);

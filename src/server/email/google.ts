@@ -173,7 +173,6 @@ async function saveGoogleConnection(companyId: string, metadata: GoogleEmailMeta
       status: "connected",
       authType: "oauth",
       metadata: next,
-      lastSyncAt: new Date(),
     },
   });
 }

@@ -76,6 +76,8 @@ model Company {
   autonomousAgentConfig AutonomousAgentConfig?
   autonomousAgentLogs    AutonomousAgentLog[]
   assessmentArchives    AssessmentArchive[]
+  chatThreads           ChatThread[]
+  chatMessages          ChatMessage[]
 }
 
 model UserCompanyRole {
@@ -397,4 +399,34 @@ model AutonomousAgentLog {
 
   @@index([companyId, createdAt])
   @@index([companyId, runId])
+}
+
+/// User-facing business chat threads (Q&A only in v1).
+model ChatThread {
+  id          String        @id @default(cuid())
+  companyId   String
+  title       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  messages    ChatMessage[]
+
+  @@index([companyId, updatedAt])
+}
+
+/// Individual chat turns for business assistant conversations.
+model ChatMessage {
+  id          String      @id @default(cuid())
+  threadId    String
+  companyId   String
+  role        String
+  content     String
+  citations   Json?
+  confidence  String?
+  createdAt   DateTime    @default(now())
+  thread      ChatThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+  @@index([companyId, createdAt])
 }

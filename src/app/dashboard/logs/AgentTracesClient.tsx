@@ -10,6 +10,7 @@ const POLL_INTERVAL_MS = 2000;
 
 type SignalExpanded = {
   type: "internal" | "external";
+  createdAt?: string;
   source?: string;
   toolName?: string;
   signalSummary?: string | null;
@@ -21,6 +22,7 @@ type SignalExpanded = {
 
 type RiskCaseExpanded = {
   id: string;
+  createdAt: string;
   triggerType: string;
   createdByAutonomousAgent?: boolean;
   entityMap: unknown;
@@ -99,6 +101,39 @@ function severityColor(severity: string | undefined): string {
   return "var(--muted)";
 }
 
+function formatTimestamp(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function stringifyValue(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function toDisplayText(value: unknown, fallback = "—"): string {
+  const text = stringifyValue(value).trim();
+  return text.length > 0 ? text : fallback;
+}
+
+function getActionLabel(action: Record<string, unknown>, index: number): string {
+  const stepTitle = action.stepTitle;
+  if (typeof stepTitle === "string" && stepTitle.trim()) return stepTitle.trim();
+  return `Step ${index + 1}`;
+}
+
+function getActionTypeLabel(action: Record<string, unknown>): string {
+  return toDisplayText(action.type, "");
+}
+
 /** Partition run entries into run-level (no case) and groups by riskCaseId. */
 function groupEntriesByCase(entries: LogEntry[]): {
   runLevel: LogEntry[];
@@ -139,6 +174,17 @@ function collectSignals(entries: LogEntry[]): {
     internal: [...internal.values()],
     external: [...external.values()],
   };
+}
+
+function latestSignalTimestampMs(entries: LogEntry[]): number {
+  let latest = 0;
+  for (const entry of entries) {
+    const signalTs = entry.signal?.createdAt ? Date.parse(entry.signal.createdAt) : NaN;
+    const entryTs = Date.parse(entry.createdAt);
+    const candidate = Number.isFinite(signalTs) ? signalTs : entryTs;
+    if (Number.isFinite(candidate) && candidate > latest) latest = candidate;
+  }
+  return latest;
 }
 
 export function AgentTracesClient() {
@@ -313,11 +359,15 @@ export function AgentTracesClient() {
             return runsToShow.map(({ runId, entries }) => {
             const { runLevel, caseGroups } = groupEntriesByCase(entries);
             const { internal: internalSignals, external: externalSignals } = collectSignals(entries);
-            const caseGroupsWithCase = [...caseGroups.entries()].filter(([, caseEntries]) =>
-              caseEntries.some((e) => e.riskCase)
-            );
+            const caseGroupsWithCase = [...caseGroups.entries()]
+              .filter(([, caseEntries]) => caseEntries.some((e) => e.riskCase))
+              .sort((a, b) => latestSignalTimestampMs(b[1]) - latestSignalTimestampMs(a[1]));
             const runLevelFiltered = runLevel.filter(
-              (log) => log.actionType !== "run_started" && log.actionType !== "run_completed"
+              (log) =>
+                log.actionType !== "run_started" &&
+                log.actionType !== "run_completed" &&
+                log.actionType !== "signal_skipped" &&
+                log.actionType !== "signal_assessed"
             );
             const startedAt = entries[0]?.createdAt;
             const completedAt = entries[entries.length - 1]?.createdAt;
@@ -390,6 +440,11 @@ export function AgentTracesClient() {
                                   <p className="text-xs muted" style={{ margin: 0 }}>
                                     {signal.source || "External source"}
                                   </p>
+                                  {signal.createdAt && (
+                                    <p className="text-xs muted" style={{ margin: 0 }}>
+                                      Received: {formatTimestamp(signal.createdAt)}
+                                    </p>
+                                  )}
                                 </div>
                               ))}
                               {externalSignals.length > 4 && (
@@ -415,6 +470,11 @@ export function AgentTracesClient() {
                                   <p className="text-xs muted" style={{ margin: 0 }}>
                                     {[signal.source, signal.toolName].filter(Boolean).join(" · ") || "Internal source"}
                                   </p>
+                                  {signal.createdAt && (
+                                    <p className="text-xs muted" style={{ margin: 0 }}>
+                                      Received: {formatTimestamp(signal.createdAt)}
+                                    </p>
+                                  )}
                                 </div>
                               ))}
                               {internalSignals.length > 4 && (
@@ -451,6 +511,7 @@ export function AgentTracesClient() {
                     const hasDrafted = caseEntries.some((e) => e.actionType === "plan_drafted");
                     const hasExecuted = caseEntries.some((e) => e.actionType === "plan_executed");
                     const riskCase = caseEntries.map((e) => e.riskCase).find(Boolean);
+                    const caseOpenedAt = riskCase?.createdAt ?? created?.createdAt;
                     const plans = Array.from(
                       new Map(
                         caseEntries
@@ -459,9 +520,17 @@ export function AgentTracesClient() {
                       ).values()
                     );
                     const executedPlans = plans.filter((p) => p.status === "EXECUTED");
-                    const executedActions = executedPlans.flatMap((p) => (Array.isArray(p.actions) ? (p.actions as { stepTitle?: string; type?: string }[]) : []));
+                    const executedActions = executedPlans.flatMap((p) =>
+                      Array.isArray(p.actions)
+                        ? (p.actions as Record<string, unknown>[])
+                        : []
+                    );
                     const executionBullets = executedActions
-                      .map((a) => a.stepTitle?.trim() || a.type || "Step")
+                      .map((a, i) => {
+                        const stepTitle = getActionLabel(a, i);
+                        const typeLabel = getActionTypeLabel(a);
+                        return typeLabel ? `${stepTitle} (${typeLabel})` : stepTitle;
+                      })
                       .filter(Boolean);
                     const planIds = Array.from(
                       new Set(caseEntries.filter((e) => e.planId).map((e) => e.planId!))
@@ -514,6 +583,11 @@ export function AgentTracesClient() {
                                   </span>
                                 )}
                                 {riskOneLiner && <span style={{ display: "block" }}>{riskOneLiner}</span>}
+                                {caseOpenedAt && (
+                                  <span style={{ display: "block" }}>
+                                    Case opened: {formatTimestamp(caseOpenedAt)}
+                                  </span>
+                                )}
                                 {executionBullets.length > 0 && (
                                   <ul className="list-reset" style={{ margin: 0, paddingLeft: 0 }}>
                                     {executionBullets.slice(0, 3).map((b, i) => (
@@ -545,6 +619,11 @@ export function AgentTracesClient() {
                             {signal && (
                               <div className="card-flat stack-xs" style={{ padding: "0.75rem 1rem", borderTop: "1px solid var(--border)" }} data-animate-item>
                                 <h4 className="text-sm font-semibold" style={{ margin: 0 }}>Signal</h4>
+                                {signal.createdAt && (
+                                  <p className="text-xs muted" style={{ margin: 0 }}>
+                                    Received: {formatTimestamp(signal.createdAt)}
+                                  </p>
+                                )}
                                 {signal.type === "internal" ? (
                                   <>
                                     <p className="text-xs muted" style={{ margin: 0 }}>{signal.source} · {signal.toolName}</p>
@@ -700,16 +779,25 @@ export function AgentTracesClient() {
                                 <p className="text-xs muted" style={{ margin: 0 }}>Status: {plan.status} · Mode: {plan.executionMode}</p>
                                 {Array.isArray(plan.actions) && (plan.actions as unknown[]).length > 0 && (
                                   <ul className="stack-xs" style={{ margin: "0.5rem 0 0 0", paddingLeft: "1rem", listStyle: "none" }}>
-                                    {(plan.actions as { type?: string; stepTitle?: string; recipientOrEndpoint?: string; payloadOrBody?: string }[]).map((action, i) => (
+                                    {(plan.actions as Record<string, unknown>[]).map((action, i) => (
                                       <li key={i} className="text-sm" style={{ borderLeft: "2px solid var(--border)", paddingLeft: "0.5rem" }}>
-                                        <span className="font-medium">{action.stepTitle ?? `Step ${i + 1}`}</span>
-                                        {action.type && <span className="muted text-xs" style={{ marginLeft: "0.35rem" }}>({action.type})</span>}
-                                        {action.recipientOrEndpoint && (
-                                          <p className="text-xs muted" style={{ margin: "0.15rem 0 0 0" }}>To: {action.recipientOrEndpoint}</p>
+                                        <span className="font-medium">{getActionLabel(action, i)}</span>
+                                        {getActionTypeLabel(action) && (
+                                          <span className="muted text-xs" style={{ marginLeft: "0.35rem" }}>
+                                            ({getActionTypeLabel(action)})
+                                          </span>
                                         )}
-                                        {action.payloadOrBody && (
+                                        {action.recipientOrEndpoint != null && (
+                                          <p className="text-xs muted" style={{ margin: "0.15rem 0 0 0" }}>
+                                            To: {toDisplayText(action.recipientOrEndpoint)}
+                                          </p>
+                                        )}
+                                        {action.payloadOrBody != null && (
                                           <p className="text-xs" style={{ margin: "0.15rem 0 0 0", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 120, overflow: "auto" }}>
-                                            {action.payloadOrBody.length > 400 ? `${action.payloadOrBody.slice(0, 400)}…` : action.payloadOrBody}
+                                            {(() => {
+                                              const text = toDisplayText(action.payloadOrBody, "");
+                                              return text.length > 400 ? `${text.slice(0, 400)}…` : text;
+                                            })()}
                                           </p>
                                         )}
                                       </li>

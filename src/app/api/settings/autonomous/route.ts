@@ -198,9 +198,13 @@ export async function PATCH(req: Request) {
     const effectiveAutomationLevel =
       automationLevel ?? (agentRunning === true ? "full_auto" : DEFAULTS.automationLevel);
 
+    const effectiveAgentRunning =
+      agentRunning ??
+      (automationLevel !== undefined ? automationLevel !== "off" : DEFAULTS.agentRunning);
+
     const data: Parameters<typeof db.autonomousAgentConfig.upsert>[0]["create"] = {
       companyId: session.companyId,
-      agentRunning: agentRunning ?? DEFAULTS.agentRunning,
+      agentRunning: effectiveAgentRunning,
       automationLevel: effectiveAutomationLevel,
       signalSources: signalSources ?? DEFAULTS.signalSources,
       internalSignalMode: internalSignalMode ?? DEFAULTS.internalSignalMode,
@@ -226,6 +230,9 @@ export async function PATCH(req: Request) {
       create: data,
       update: {
         ...(agentRunning !== undefined && { agentRunning }),
+        ...(agentRunning === undefined && automationLevel !== undefined && {
+          agentRunning: automationLevel !== "off",
+        }),
         ...(automationLevel !== undefined && { automationLevel }),
         ...(agentRunning === true && automationLevel === undefined && { automationLevel: "full_auto" }),
         ...(signalSources !== undefined && { signalSources }),

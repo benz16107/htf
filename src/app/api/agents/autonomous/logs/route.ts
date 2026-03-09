@@ -25,6 +25,7 @@ type LogEntrySerialized = {
   /** Filled when signalId + signalType present */
   signal?: {
     type: "internal" | "external";
+    createdAt?: string;
     source?: string | null;
     toolName?: string;
     signalSummary?: string | null;
@@ -36,6 +37,7 @@ type LogEntrySerialized = {
   /** Filled when riskCaseId present */
   riskCase?: {
     id: string;
+    createdAt: string;
     triggerType: string;
     createdByAutonomousAgent: boolean;
     entityMap: unknown;
@@ -117,8 +119,20 @@ export async function GET() {
     const riskCaseIds = [...new Set(logs.filter((l) => l.riskCaseId).map((l) => l.riskCaseId!))];
     const planIds = [...new Set(logs.filter((l) => l.planId).map((l) => l.planId!))];
 
-    const internalSignals: Map<string, { source: string; toolName: string; signalSummary: string | null; rawContent: unknown }> = new Map();
-    const externalSignals: Map<string, { title: string; snippet: string; url: string | null; source: string | null }> = new Map();
+    const internalSignals: Map<string, {
+      createdAt: string;
+      source: string;
+      toolName: string;
+      signalSummary: string | null;
+      rawContent: unknown;
+    }> = new Map();
+    const externalSignals: Map<string, {
+      createdAt: string;
+      title: string;
+      snippet: string;
+      url: string | null;
+      source: string | null;
+    }> = new Map();
     const riskCases: Map<string, LogEntrySerialized["riskCase"]> = new Map();
     const plans: Map<string, LogEntrySerialized["plan"]> = new Map();
 
@@ -126,16 +140,28 @@ export async function GET() {
       if (internalSignalIds.length > 0) {
         const events = await db.ingestedEvent.findMany({
           where: { id: { in: internalSignalIds }, companyId },
-          select: { id: true, source: true, toolName: true, signalSummary: true, rawContent: true },
+          select: { id: true, createdAt: true, source: true, toolName: true, signalSummary: true, rawContent: true },
         });
-        events.forEach((e) => internalSignals.set(e.id, { source: e.source, toolName: e.toolName, signalSummary: e.signalSummary, rawContent: e.rawContent }));
+        events.forEach((e) => internalSignals.set(e.id, {
+          createdAt: e.createdAt.toISOString(),
+          source: e.source,
+          toolName: e.toolName,
+          signalSummary: e.signalSummary,
+          rawContent: e.rawContent,
+        }));
       }
       if (externalSignalIds.length > 0) {
         const signals = await db.savedExternalSignal.findMany({
           where: { id: { in: externalSignalIds }, companyId },
-          select: { id: true, title: true, snippet: true, url: true, source: true },
+          select: { id: true, createdAt: true, title: true, snippet: true, url: true, source: true },
         });
-        signals.forEach((s) => externalSignals.set(s.id, { title: s.title, snippet: s.snippet, url: s.url, source: s.source }));
+        signals.forEach((s) => externalSignals.set(s.id, {
+          createdAt: s.createdAt.toISOString(),
+          title: s.title,
+          snippet: s.snippet,
+          url: s.url,
+          source: s.source,
+        }));
       }
       if (riskCaseIds.length > 0) {
         const cases = await db.riskCase.findMany({
@@ -145,6 +171,7 @@ export async function GET() {
         cases.forEach((rc) =>
           riskCases.set(rc.id, {
             id: rc.id,
+            createdAt: rc.createdAt.toISOString(),
             triggerType: rc.triggerType,
             createdByAutonomousAgent: rc.createdByAutonomousAgent,
             entityMap: rc.entityMap,
