@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
+import { buildSetupPrompt } from "./prompts";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "",
@@ -22,19 +23,12 @@ export type SetupAgentResult = {
 };
 
 export async function runSetupAgent(input: SetupAgentInput): Promise<SetupAgentResult> {
-  const promptText = `
-    You are the AI Setup Agent. Review these inputs:
-    Company Name: ${input.companyName}
-    Sector: ${input.sector}
-    Type: ${input.companyType}
-    Summary: ${input.supplyChainSummary}
-    
-    1. Create a professional, finalized summary of this company's supply chain graph.
-    2. Document if there are any immediate missing pieces or warnings about the provided data.
-    3. Provide your explicit reasoning traces of how you classified their supply chain structure.
-
-    Provide your response in JSON format exactly matching these keys: "summary" (string), "warnings" (array of strings), "traces" (array of objects with "stepKey" and "rationale" strings).
-  `;
+  const promptText = buildSetupPrompt({
+    companyName: input.companyName,
+    sector: input.sector,
+    companyType: input.companyType,
+    supplyChainSummary: input.supplyChainSummary,
+  });
 
   try {
     const response = await ai.models.generateContent({

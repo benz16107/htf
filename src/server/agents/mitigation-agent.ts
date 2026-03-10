@@ -5,6 +5,7 @@ import { getGoogleEmailConnectionStatus } from "@/server/email/google";
 import { BackboardClient } from "../memory/backboard-client";
 import { listZapierMCPTools } from "../zapier/mcp-client";
 import { getZapierMCPConfigForCompany, getZapierMCPToolSelections } from "../zapier/mcp-config";
+import { buildMitigationPrompt } from "./prompts";
 
 const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY || "",
@@ -152,40 +153,27 @@ export async function generateMitigationPlan(
             ? `\n(Input context tools, used elsewhere for automatic retrieval: ${toolSelections.inputContextTools.join(", ")}. Do not use these for mitigation actions.)\n`
             : "";
 
-    const promptText = `
-    You are the Autonomous Action Layer Agent.
-    Your job is to translate an approved theoretical risk mitigation scenario into concrete executable actions.
-    
-    ## Company Profile
-    Name: ${company.name}
-    Sector: ${company.baseProfile?.sector || "Unknown"}
-    Input context integrations (auto retrieval): ${toolSelections.inputContextTools.join(", ") || "None"}
-    Execution integrations (for mitigation actions): ${toolSelections.executionTools.join(", ") || "None"}
-    ${executionToolsBlock}${inputContextNote}
-    ## The Incident Context
-    Trigger: ${riskCase.triggerType}
-    Details: ${JSON.stringify(riskCase.entityMap)}
-    Severity: ${riskCase.severity}
-    
-    ## The Selected Strategy
-    Chosen Scenario: ${scenario.name}
-    Recommendation Path: ${scenario.recommendation}
-    Cost Delta: ${scenario.costDelta}
-    Service Impact: ${scenario.serviceImpact}
-    Risk Reduction: ${scenario.riskReduction}
-    
-    ## Your Task
-    ${(hasExecutionTools || hasDirectEmail)
-        ? "Using ONLY the execution options listed above, produce a well-rounded execution plan. Include 1-3 \"insight\" or \"recommendation\" steps, then concrete executable actions that use ONLY those options (e.g. if direct Gmail is available, you may suggest sending an email; if Slack is in the list, you may suggest posting). Do NOT suggest any action (email, Slack, CRM, etc.) whose delivery path is not available."
-        : "You have no execution tools enabled. Produce a plan with ONLY \"insight\" and \"recommendation\" steps. Do NOT suggest sending email, posting to Slack, or any other execution action—only observations and recommendations for the operator."}
-    Possible action types: ${actionTypesDesc}
-    
-    For executionMode, default to "human_in_loop".
-    For each action include a "stepTitle" (short human-readable step name).
-    Return your output strictly as JSON. No markdown wrapping.
-    Output Form (only include action types that are allowed above; if no execution tools, only use insight and recommendation):
-    ${(hasExecutionTools || hasDirectEmail)
-        ? `{
+    const promptText = buildMitigationPrompt({
+        companyName: company.name,
+        sector: company.baseProfile?.sector || "Unknown",
+        inputContextToolsCsv: toolSelections.inputContextTools.join(", ") || "None",
+        executionToolsCsv: toolSelections.executionTools.join(", ") || "None",
+        executionToolsBlock,
+        inputContextNote,
+        triggerType: riskCase.triggerType,
+        entityMapJson: JSON.stringify(riskCase.entityMap),
+        severity: riskCase.severity,
+        scenarioName: scenario.name,
+        recommendationPath: scenario.recommendation,
+        costDelta: String(scenario.costDelta),
+        serviceImpact: String(scenario.serviceImpact),
+        riskReduction: String(scenario.riskReduction),
+        taskInstruction: (hasExecutionTools || hasDirectEmail)
+            ? "Using ONLY the execution options listed above, produce a well-rounded execution plan. Include 1-3 \"insight\" or \"recommendation\" steps, then concrete executable actions that use ONLY those options (e.g. if direct Gmail is available, you may suggest sending an email; if Slack is in the list, you may suggest posting). Do NOT suggest any action (email, Slack, CRM, etc.) whose delivery path is not available."
+            : "You have no execution tools enabled. Produce a plan with ONLY \"insight\" and \"recommendation\" steps. Do NOT suggest sending email, posting to Slack, or any other execution action-only observations and recommendations for the operator.",
+        actionTypesDesc,
+        outputForm: (hasExecutionTools || hasDirectEmail)
+            ? `{
       "actions": [
         { "type": "insight", "recipientOrEndpoint": "", "payloadOrBody": "Consider contacting backup suppliers given the 3-month delay.", "requiresHumanApproval": false, "stepTitle": "Key consideration" },
         { "type": "recommendation", "recipientOrEndpoint": "", "payloadOrBody": "Escalate to procurement lead within 24h.", "requiresHumanApproval": false, "stepTitle": "Next step" }
@@ -195,15 +183,15 @@ export async function generateMitigationPlan(
       "executionMode": "human_in_loop",
       "summary": "Drafted insights and execution steps using enabled tools only."
     }`
-        : `{
+            : `{
       "actions": [
         { "type": "insight", "recipientOrEndpoint": "", "payloadOrBody": "Consider contacting backup suppliers given the 3-month delay.", "requiresHumanApproval": false, "stepTitle": "Key consideration" },
         { "type": "recommendation", "recipientOrEndpoint": "", "payloadOrBody": "Connect direct Gmail or add an execution tool (e.g. Gmail: Send Email) in Integrations to enable sending emails from plans.", "requiresHumanApproval": false, "stepTitle": "Enable integrations" }
       ],
       "executionMode": "human_in_loop",
       "summary": "Insights and recommendations only; no execution tools enabled."
-    }`}
-  `;
+    }`,
+    });
 
     const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
