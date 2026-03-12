@@ -46,7 +46,6 @@ export function AssessmentOutputsSection({
   return (
     <section className="card stack">
       <h3>Assessment outputs</h3>
-      <p className="muted text-sm">Send to mitigation for plans, or run another assessment.</p>
       <div className="stack-sm">
         {outputs.map((out) => {
           const a = out.assessment;
@@ -78,6 +77,9 @@ export function AssessmentOutputsSection({
                     className="btn primary btn-sm"
                     onClick={() => onSendToMitigation(out)}
                   >
+                    <span className="material-symbols-rounded btn__icon" aria-hidden>
+                      send
+                    </span>
                     Send to mitigation
                   </button>
                   <button
@@ -86,6 +88,9 @@ export function AssessmentOutputsSection({
                     onClick={() => onRemoveOutput(out.id)}
                     aria-label="Remove output"
                   >
+                    <span className="material-symbols-rounded btn__icon" aria-hidden>
+                      delete
+                    </span>
                     Remove
                   </button>
                 </div>
@@ -191,7 +196,10 @@ export function AssessmentOutputsSection({
                   onClick={() => setExpandedId(isExpanded ? null : out.id)}
                   aria-expanded={isExpanded}
                 >
-                  {isExpanded ? "Hide details" : "Show more details"}
+                  <span className="material-symbols-rounded btn__icon" aria-hidden>
+                    {isExpanded ? "expand_less" : "expand_more"}
+                  </span>
+                  {isExpanded ? "Hide details" : "Show details"}
                 </button>
                 {isExpanded && (
                   <div className="card-flat stack-sm mt-xs pad-sm">
@@ -224,9 +232,6 @@ export function AssessmentOutputsSection({
                         )}
                       </div>
                     )}
-                    <p className="text-xs muted">
-                      The agent derived these numbers from the selected signals and your company profile. Key drivers are shown on the card above; below are the affected areas it used.
-                    </p>
                     {Array.isArray(impact?.affectedAreas) && impact.affectedAreas.length > 0 && (
                       <div>
                         <p className="text-xs uppercase muted" style={{ margin: "0 0 0.35rem 0" }}>Affected areas</p>
@@ -239,7 +244,7 @@ export function AssessmentOutputsSection({
                     )}
                     {prob?.bandLow != null && prob?.bandHigh != null && prob.pointEstimate == null && (
                       <p className="text-xs muted">
-                        Probability band: {toPercent(prob.bandLow).toFixed(0)}%–{toPercent(prob.bandHigh).toFixed(0)}% (agent did not output a single point estimate).
+                        Probability band: {toPercent(prob.bandLow).toFixed(0)}%–{toPercent(prob.bandHigh).toFixed(0)}%.
                       </p>
                     )}
                     {fin?.hardCostIncreaseUsd != null && fin.hardCostIncreaseUsd > 0 && (

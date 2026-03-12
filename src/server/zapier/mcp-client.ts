@@ -30,11 +30,6 @@ export function getZapierMCPGlobalConfig(): { serverUrl: string; secret: string 
 
 export type ZapierMCPConfig = { serverUrl: string; secret: string };
 
-/** Whether MCP is usable (embed secret set, or global URL set). */
-export function isZapierMCPConfigured(): boolean {
-  return !!getZapierEmbedSecret() || !!getZapierMCPGlobalConfig();
-}
-
 async function getOrCreateClient(config: ZapierMCPConfig): Promise<Client | null> {
   const { serverUrl, secret } = config;
   if (!serverUrl || !secret) return null;
@@ -93,17 +88,3 @@ export async function callZapierMCPTool(
   return { content, isError };
 }
 
-/**
- * Close a cached connection by server URL (e.g. when company disconnects).
- */
-export async function closeZapierMCPClientByUrl(serverUrl: string): Promise<void> {
-  const cached = clientCache.get(serverUrl);
-  if (cached) {
-    await cached.transport.close();
-    clientCache.delete(serverUrl);
-  }
-}
-
-export async function closeAllZapierMCPClients(): Promise<void> {
-  await Promise.all([...clientCache.keys()].map(closeZapierMCPClientByUrl));
-}

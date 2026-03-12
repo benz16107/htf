@@ -77,7 +77,7 @@ export function OverviewAutonomousToggle({ initialLevel }: Props) {
           onClick={toggle}
           title={fullAuto ? "Full auto - click to turn off" : "Off - click for Full auto"}
           onColor="var(--accent)"
-          offColor="var(--surface-soft)"
+          offColor="var(--surface-container-highest)"
           className={fullAuto ? "agent-toggle--on" : undefined}
         />
         <span

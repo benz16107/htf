@@ -25,13 +25,12 @@ function SignUpForm() {
     <div className="auth-page">
       <div className="auth-card auth-card--signin animate-scale">
         <Link href="/" className="row gap-2xs" style={{ marginBottom: "1.5rem", textDecoration: "none", color: "inherit" }}>
-          <div className="sidebar-logo-mark" />
-          <span style={{ fontWeight: 700, fontSize: "1.125rem", letterSpacing: "-0.03em" }}>PENTAGON</span>
+          <div className="brand-mark" />
+          <span className="product-wordmark">PENTAGON</span>
         </Link>
 
         <header className="auth-card__header">
           <h1>Create account</h1>
-          <p className="muted text-sm">Create your account. You’ll complete setup next.</p>
         </header>
 
         {errorMessage && (
@@ -76,6 +75,9 @@ function SignUpForm() {
             />
           </div>
           <button type="submit" className="btn primary auth-card__submit">
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              person_add
+            </span>
             Create account
           </button>
         </form>
@@ -83,9 +85,12 @@ function SignUpForm() {
         <footer className="auth-card__footer">
           <p className="muted text-sm">
             Already have an account?{" "}
-            <Link href="/sign-in" className="link" style={{ color: "var(--accent-text)", fontWeight: 600 }}>Sign in</Link>
+            <Link href="/sign-in" className="link">Sign in</Link>
           </p>
           <Link href="/" className="btn secondary auth-card__back">
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              arrow_back
+            </span>
             Back to home
           </Link>
         </footer>

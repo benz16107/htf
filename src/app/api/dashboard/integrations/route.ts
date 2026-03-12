@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isGeminiModelId } from "@/lib/gemini-models";
 import { getRequestOrigin } from "@/lib/request-origin";
+import { saveGeminiModelForCompany } from "@/server/gemini-model-preference";
 import { saveZapierMCPToolSelections } from "@/server/zapier/mcp-config";
 
 export async function POST(request: Request) {
@@ -29,6 +31,10 @@ export async function POST(request: Request) {
     inputContextTools,
     executionTools,
   });
+  const requestedGeminiModel = formData.get("geminiModel")?.toString().trim() || "";
+  if (isGeminiModelId(requestedGeminiModel)) {
+    await saveGeminiModelForCompany(session.companyId, requestedGeminiModel);
+  }
 
   if (wantsJson) {
     return NextResponse.json({ success: true });

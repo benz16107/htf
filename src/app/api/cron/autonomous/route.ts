@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { renewExpiringGmailWatches } from "@/server/email/google";
 
-const RUN_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes — should match cron schedule
-
 function getOrigin(req: Request): string {
   const url = req.url;
   if (typeof url === "string") {
@@ -60,9 +58,30 @@ async function runCron(req: Request) {
     );
   }
 
-  const results: { companyId: string; ok: boolean; status?: number }[] = [];
+  const results: { companyId: string; ok: boolean; ingestStatus?: number; status?: number }[] = [];
   for (const { companyId } of configs) {
     try {
+      let ingestStatus: number | undefined;
+      const ingestRes = await fetch(`${origin}/api/risk/ingest`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-cron-secret": secret,
+        },
+        body: JSON.stringify({ companyId }),
+        cache: "no-store",
+      });
+      ingestStatus = ingestRes.status;
+      if (!ingestRes.ok) {
+        const text = await ingestRes.text().catch(() => "");
+        console.error(
+          "Cron ingest fetch error for company %s: status=%d body=%s",
+          companyId,
+          ingestRes.status,
+          text.slice(0, 200)
+        );
+      }
+
       const res = await fetch(`${origin}/api/agents/autonomous/run`, {
         method: "POST",
         headers: {
@@ -72,7 +91,7 @@ async function runCron(req: Request) {
         body: JSON.stringify({ companyId, continuous: true }),
         cache: "no-store",
       });
-      results.push({ companyId, ok: res.ok, status: res.status });
+      results.push({ companyId, ok: res.ok, ingestStatus, status: res.status });
     } catch (err) {
       console.error("Cron autonomous run fetch error:", err);
       results.push({ companyId, ok: false });

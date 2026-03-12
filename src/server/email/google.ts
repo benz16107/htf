@@ -481,6 +481,11 @@ export async function sendGmailEmail(args: {
   to: string | string[];
   subject: string;
   body: string;
+  attachments?: Array<{
+    filename: string;
+    mimeType?: string;
+    contentBase64: string;
+  }>;
 }): Promise<void> {
   const meta = await getGoogleConnectionMetadata(args.companyId);
   if (!hasGoogleScope(meta.scope, GMAIL_SEND_SCOPE)) {
@@ -493,16 +498,49 @@ export async function sendGmailEmail(args: {
     throw new Error("No email recipient provided.");
   }
 
-  const lines = [
-    `To: ${toList.join(", ")}`,
-    ...(emailAddress ? [`From: ${emailAddress}`] : []),
-    `Subject: ${args.subject}`,
-    "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "",
-    args.body,
-  ];
-  const raw = encodeBase64Url(lines.join("\r\n"));
+  const attachments = Array.isArray(args.attachments) ? args.attachments.filter((a) => a?.filename && a?.contentBase64) : [];
+  let rawMessage = "";
+  if (attachments.length === 0) {
+    const lines = [
+      `To: ${toList.join(", ")}`,
+      ...(emailAddress ? [`From: ${emailAddress}`] : []),
+      `Subject: ${args.subject}`,
+      "MIME-Version: 1.0",
+      'Content-Type: text/plain; charset="UTF-8"',
+      "",
+      args.body,
+    ];
+    rawMessage = lines.join("\r\n");
+  } else {
+    const boundary = `htf-boundary-${Date.now()}`;
+    const lines: string[] = [
+      `To: ${toList.join(", ")}`,
+      ...(emailAddress ? [`From: ${emailAddress}`] : []),
+      `Subject: ${args.subject}`,
+      "MIME-Version: 1.0",
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      "",
+      args.body,
+      "",
+    ];
+    for (const attachment of attachments) {
+      lines.push(
+        `--${boundary}`,
+        `Content-Type: ${attachment.mimeType || "application/octet-stream"}; name="${attachment.filename}"`,
+        "Content-Transfer-Encoding: base64",
+        `Content-Disposition: attachment; filename="${attachment.filename}"`,
+        "",
+        attachment.contentBase64,
+        ""
+      );
+    }
+    lines.push(`--${boundary}--`, "");
+    rawMessage = lines.join("\r\n");
+  }
+  const raw = encodeBase64Url(rawMessage);
 
   const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
     method: "POST",

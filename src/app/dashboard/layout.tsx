@@ -18,10 +18,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <div className="dashboard-shell">
       <AgentHeartbeat />
       <aside className="sidebar">
-        <DashboardSidebar email={session.email} companyName={companyName} />
+        <DashboardSidebar companyName={companyName} />
       </aside>
       <main className="dashboard-main">
-        {children}
+        <div className="dashboard-main__inner">
+          {children}
+        </div>
       </main>
     </div>
   );

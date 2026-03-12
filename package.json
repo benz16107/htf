@@ -13,8 +13,6 @@
     "prisma:migrate:dev": "prisma migrate dev"
   },
   "dependencies": {
-    "@ai-sdk/google": "^3.0.41",
-    "@clerk/nextjs": "^7.0.1",
     "@google/genai": "^1.44.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@prisma/adapter-pg": "^6.16.0",
@@ -22,7 +20,6 @@
     "@prisma/extension-accelerate": "^3.0.1",
     "@supabase/ssr": "^0.9.0",
     "@supabase/supabase-js": "^2.98.0",
-    "ai": "^6.0.115",
     "animejs": "^4.3.6",
     "backboard-sdk": "^1.5.2",
     "bcryptjs": "^3.0.3",
@@ -30,6 +27,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
+    "xlsx": "^0.18.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -1,7 +1,6 @@
 "use client";
 
-import { animate } from "animejs";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 
 type AnimatedSwitchProps = {
   checked: boolean;
@@ -26,57 +25,11 @@ export function AnimatedSwitch({
   offColor,
   className,
 }: AnimatedSwitchProps) {
-  const trackRef = useRef<HTMLButtonElement>(null);
-  const thumbRef = useRef<HTMLSpanElement>(null);
-  const trackAnimationRef = useRef<ReturnType<typeof animate> | null>(null);
-  const thumbAnimationRef = useRef<ReturnType<typeof animate> | null>(null);
-  const thumbSize = useMemo(() => height - 8, [height]);
+  const thumbSize = useMemo(() => Math.max(14, height - 8), [height]);
   const travel = useMemo(() => width - thumbSize - 8, [thumbSize, width]);
-
-  useLayoutEffect(() => {
-    const track = trackRef.current;
-    const thumb = thumbRef.current;
-    if (!track || !thumb) return;
-
-    trackAnimationRef.current?.cancel();
-    thumbAnimationRef.current?.cancel();
-
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      track.style.backgroundColor = checked ? onColor : offColor;
-      thumb.style.transform = `translateX(${checked ? travel : 0}px)`;
-      return;
-    }
-
-    track.style.willChange = "background-color";
-    thumb.style.willChange = "transform";
-
-    trackAnimationRef.current = animate(track, {
-      backgroundColor: checked ? onColor : offColor,
-      duration: 260,
-      ease: "out(3)",
-      onComplete: () => {
-        track.style.willChange = "";
-      },
-    });
-
-    thumbAnimationRef.current = animate(thumb, {
-      translateX: checked ? travel : 0,
-      duration: 420,
-      ease: "out(4)",
-      onComplete: () => {
-        thumb.style.willChange = "";
-      },
-    });
-
-    return () => {
-      trackAnimationRef.current?.cancel();
-      thumbAnimationRef.current?.cancel();
-    };
-  }, [checked, offColor, onColor, travel]);
 
   return (
     <button
-      ref={trackRef}
       type="button"
       role="switch"
       aria-checked={checked}
@@ -84,34 +37,19 @@ export function AnimatedSwitch({
       disabled={disabled}
       onClick={onClick}
       title={title}
-      className={className}
+      className={["m3-switch", className].filter(Boolean).join(" ")}
       style={{
+        ["--m3-switch-track-on" as string]: onColor,
+        ["--m3-switch-track-off" as string]: offColor,
+        ["--m3-switch-thumb-size" as string]: `${thumbSize}px`,
+        ["--m3-switch-thumb-travel" as string]: `${travel}px`,
         width,
         height,
-        borderRadius: height / 2,
-        border: `2px solid ${checked ? onColor : "var(--border)"}`,
-        background: checked ? onColor : offColor,
-        cursor: disabled ? "not-allowed" : "pointer",
-        position: "relative",
-        flexShrink: 0,
-        padding: 0,
-        transition: "border-color 0.2s ease, box-shadow 0.2s ease",
       }}
     >
       <span
-        ref={thumbRef}
+        className="m3-switch__thumb"
         aria-hidden="true"
-        style={{
-          position: "absolute",
-          top: 2,
-          left: 2,
-          width: thumbSize,
-          height: thumbSize,
-          borderRadius: "50%",
-          background: "#fff",
-          boxShadow: "var(--shadow-sm)",
-          transform: `translateX(${checked ? travel : 0}px)`,
-        }}
       />
     </button>
   );

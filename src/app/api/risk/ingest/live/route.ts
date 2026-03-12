@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isNonRiskNotification } from "@/lib/signal-filters";
 import { getRequestOrigin } from "@/lib/request-origin";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 import {
   buildInboundSignalSummary,
   extractLiveInboundItems,
@@ -41,7 +42,8 @@ function contentForRiskCheck(summary: string, raw?: unknown): string {
 }
 
 async function classifyRiskRelevance(
-  items: { summary: string; raw?: unknown }[]
+  items: { summary: string; raw?: unknown }[],
+  model: string,
 ): Promise<boolean[]> {
   if (items.length === 0) return [];
   if (!process.env.GEMINI_API_KEY) return items.map(() => false);
@@ -51,7 +53,7 @@ async function classifyRiskRelevance(
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model,
       contents: prompt,
       config: { responseMimeType: "application/json" },
     });
@@ -156,6 +158,7 @@ export async function POST(request: Request) {
   if (!authorized) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const model = await getGeminiModelForCompany(companyId);
 
   const items = extractLiveInboundItems(body);
   if (items.length === 0) {
@@ -182,7 +185,8 @@ export async function POST(request: Request) {
     .map((candidate, index) => ({ candidate, index }))
     .filter(({ index }) => !obviousNonRiskFlags[index]);
   const classifiedFlags = await classifyRiskRelevance(
-    toClassify.map(({ candidate }) => ({ summary: candidate.summary, raw: candidate.item }))
+    toClassify.map(({ candidate }) => ({ summary: candidate.summary, raw: candidate.item })),
+    model,
   );
   const relevantFlags = candidates.map((_, index) => {
     if (obviousNonRiskFlags[index]) return false;

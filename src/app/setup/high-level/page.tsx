@@ -120,14 +120,14 @@ export default function HighLevelSetupPage() {
   return (
     <AnimeStagger className="container stack-xl" itemSelector="[data-animate-section]" delayStep={85}>
       <div data-animate-section>
-        <AppHeader title="High-level profile" subtitle="Step 3 of 4" />
+        <AppHeader title="High-level profile" subtitle="Step 4 of 5" />
       </div>
-      {savedStep === "integrations" ? (
+      {savedStep === "stakeholders" ? (
         <div data-animate-section>
           <StatusBanner
             variant="success"
-            title="Integrations saved"
-            message="Tool assignments are ready. Finish the high-level profile to complete setup."
+            title="Supply chain links saved"
+            message="Stakeholder mapping is ready. Finish the high-level profile to complete setup."
           />
         </div>
       ) : null}

@@ -3,13 +3,17 @@ import { redirect } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { AnimeStagger } from "@/components/AnimeStagger";
 import { getZapierMCPToolSelections } from "@/server/zapier/mcp-config";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 import IntegrationsDashboardClient from "./IntegrationsDashboardClient";
 
 export default async function DashboardIntegrationsPage() {
   const session = await getSession();
   if (!session?.companyId) redirect("/sign-in");
 
-  const { inputContextTools, executionTools } = await getZapierMCPToolSelections(session.companyId);
+  const [{ inputContextTools, executionTools }, initialGeminiModel] = await Promise.all([
+    getZapierMCPToolSelections(session.companyId),
+    getGeminiModelForCompany(session.companyId),
+  ]);
 
   return (
     <AnimeStagger className="stack-xl" style={{ maxWidth: 1100 }} itemSelector="[data-animate-section]" delayStep={85}>
@@ -20,6 +24,7 @@ export default async function DashboardIntegrationsPage() {
         <IntegrationsDashboardClient
           initialInputContextTools={inputContextTools}
           initialExecutionTools={executionTools}
+          initialGeminiModel={initialGeminiModel}
           userEmail={session.email}
         />
       </div>

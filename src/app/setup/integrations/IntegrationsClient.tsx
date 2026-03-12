@@ -7,17 +7,20 @@ import { DirectEmailConnectionCard } from "@/components/DirectEmailConnectionCar
 import { StatusBanner } from "@/components/StatusBanner";
 import { SuggestedIntegrationsBox } from "@/components/SuggestedIntegrationsBox";
 import { ZapierMcpEmbed } from "@/components/ZapierMcpEmbed";
+import { GEMINI_MODEL_OPTIONS, type GeminiModelId } from "@/lib/gemini-models";
 import { getSuggestedZoneForTool, getSuggestedZoneLabel, groupToolsByApp } from "@/lib/integration-tool-hint";
 
 type Props = {
   initialInputContextTools: string[];
   initialExecutionTools: string[];
+  initialGeminiModel: GeminiModelId;
   userEmail?: string;
 };
 
 export default function IntegrationsClient({
   initialInputContextTools,
   initialExecutionTools,
+  initialGeminiModel,
   userEmail,
 }: Props) {
   const [mcpTools, setMcpTools] = useState<{ name: string; description?: string }[]>([]);
@@ -27,6 +30,7 @@ export default function IntegrationsClient({
   const [isLocalhost, setIsLocalhost] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [savedStep, setSavedStep] = useState<string | null>(null);
+  const [geminiModel, setGeminiModel] = useState<GeminiModelId>(initialGeminiModel);
 
   useEffect(() => {
     const h = window.location.hostname;
@@ -77,7 +81,7 @@ export default function IntegrationsClient({
           <StatusBanner
             variant="success"
             title="Base profile saved"
-            message="Your company profile is ready. Next, choose which integrations the agent can read from and act through."
+            message="Next: choose integrations."
           />
         </div>
       ) : null}
@@ -95,6 +99,44 @@ export default function IntegrationsClient({
         <DirectEmailConnectionCard />
       </div>
 
+      <section className="card stack" data-animate-section>
+        <h3>AI model preference</h3>
+        <p className="muted text-sm" style={{ margin: 0 }}>
+          Choose speed or higher reasoning quality for Gemini-powered analysis.
+        </p>
+        <div
+          className="model-choice-group"
+          role="radiogroup"
+          aria-label="Gemini model"
+          style={{ marginTop: "0.5rem" }}
+        >
+          {GEMINI_MODEL_OPTIONS.map((option) => {
+            const selected = option.id === geminiModel;
+            return (
+              <label
+                key={option.id}
+                className={`model-choice ${selected ? "is-selected" : ""}`}
+                aria-checked={selected}
+              >
+                <input
+                  type="radio"
+                  name="geminiModelUi"
+                  checked={selected}
+                  onChange={() => setGeminiModel(option.id)}
+                />
+                <span className="model-choice__content">
+                  <span className="model-choice__title">{option.label}</span>
+                  <span className="model-choice__id">{option.id}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        <p className="muted text-xs" style={{ margin: 0 }}>
+          {GEMINI_MODEL_OPTIONS.find((option) => option.id === geminiModel)?.description}
+        </p>
+      </section>
+
       {embedId && (
         <section className="card stack" data-animate-section>
           <h3>Connect Zapier (MCP)</h3>
@@ -108,20 +150,14 @@ export default function IntegrationsClient({
             </div>
           ) : (
             <>
-              <p className="muted text-sm">
-                Sign in or connect your Zapier account in the box below. That connection is tied to <strong>your company</strong> in this app. Once connected, your available tools will appear in the two zones below.
-              </p>
-              <p className="muted text-sm">
-                <strong>Input context</strong> tools are used by the agent to automatically gather data (e.g. read emails, pull CRM data) without interrupting you. <strong>Execution</strong> tools let the agent take action through mitigation plans (e.g. draft and send an email to a supplier). You can assign the same tool to both zones if it supports both reading and acting.
-              </p>
+              <p className="muted text-sm">Connect Zapier, then assign tools below.</p>
             </>
           )}
           <ZapierMcpEmbed embedId={embedId} height="460px" className="zapier-embed-iframe" signUpEmail={userEmail} onMcpServerUrl={handleMcpServerUrl} onToolsChanged={fetchMcpTools} />
           {!isLocalhost && (
             <div className="card-flat stack-xs" style={{ marginTop: "0.75rem", padding: "0.6rem 0.75rem" }}>
-              <p className="text-xs font-medium" style={{ color: "var(--foreground)" }}>Can&apos;t click Continue?</p>
               <p className="muted text-xs" style={{ margin: 0 }}>
-                Zapier&apos;s chat can cover the button. Try: scroll down inside the box so the Continue button moves up, then click it; or press Tab until Continue is focused and press Enter.
+                If Continue is covered, scroll inside the box or press Tab.
               </p>
             </div>
           )}
@@ -130,9 +166,7 @@ export default function IntegrationsClient({
 
       <section className="integrations-zones" data-animate-section>
         <h3 className="integrations-zones__title">Assign tools to roles</h3>
-        <p className="muted text-sm integrations-zones__subtitle">
-          Choose which tools the agent uses for gathering context vs. taking action. Selections in each zone are independent.
-        </p>
+        <p className="muted text-sm integrations-zones__subtitle">Input context = read. Execution = act.</p>
 
         {toolsLoading ? (
           <p className="muted text-sm">Loading tools…</p>
@@ -147,15 +181,21 @@ export default function IntegrationsClient({
                     className="btn secondary btn-sm"
                     onClick={() => setInputContext(new Set(mcpTools.slice(0, 50).map((t) => t.name)))}
                   >
+                    <span className="material-symbols-rounded btn__icon" aria-hidden>
+                      select_all
+                    </span>
                     Select all
                   </button>
                   <button type="button" className="btn secondary btn-sm" onClick={() => setInputContext(new Set())}>
+                    <span className="material-symbols-rounded btn__icon" aria-hidden>
+                      deselect
+                    </span>
                     Deselect all
                   </button>
                 </div>
               </div>
               <p className="muted text-sm integrations-zone__desc">
-                The agent uses these tools to automatically retrieve context (e.g. inbox, CRM, ERP). No user interruption.
+                Used to gather context.
               </p>
               <div className="integrations-zone__list">
                 {groupToolsByApp(mcpTools.slice(0, 50)).map(({ appKey, appLabel, tools: appTools }) => (
@@ -175,6 +215,9 @@ export default function IntegrationsClient({
                             setInputContext((prev) => new Set([...prev, ...appTools.map((t) => t.name)]));
                           }}
                         >
+                          <span className="material-symbols-rounded btn__icon" aria-hidden>
+                            select_all
+                          </span>
                           Select all
                         </button>
                         <button
@@ -191,6 +234,9 @@ export default function IntegrationsClient({
                             });
                           }}
                         >
+                          <span className="material-symbols-rounded btn__icon" aria-hidden>
+                            deselect
+                          </span>
                           Clear
                         </button>
                       </span>
@@ -231,15 +277,21 @@ export default function IntegrationsClient({
                     className="btn secondary btn-sm"
                     onClick={() => setExecution(new Set(mcpTools.slice(0, 50).map((t) => t.name)))}
                   >
+                    <span className="material-symbols-rounded btn__icon" aria-hidden>
+                      select_all
+                    </span>
                     Select all
                   </button>
                   <button type="button" className="btn secondary btn-sm" onClick={() => setExecution(new Set())}>
+                    <span className="material-symbols-rounded btn__icon" aria-hidden>
+                      deselect
+                    </span>
                     Deselect all
                   </button>
                 </div>
               </div>
               <p className="muted text-sm integrations-zone__desc">
-                The agent can use these tools to take action via mitigation plans (e.g. draft and send email to supplier, update a ticket). Archive, send, draft, reply belong here—not in input.
+                Used to take action.
               </p>
               <div className="integrations-zone__list">
                 {groupToolsByApp(mcpTools.slice(0, 50)).map(({ appKey, appLabel, tools: appTools }) => (
@@ -259,6 +311,9 @@ export default function IntegrationsClient({
                             setExecution((prev) => new Set([...prev, ...appTools.map((t) => t.name)]));
                           }}
                         >
+                          <span className="material-symbols-rounded btn__icon" aria-hidden>
+                            select_all
+                          </span>
                           Select all
                         </button>
                         <button
@@ -275,6 +330,9 @@ export default function IntegrationsClient({
                             });
                           }}
                         >
+                          <span className="material-symbols-rounded btn__icon" aria-hidden>
+                            deselect
+                          </span>
                           Clear
                         </button>
                       </span>
@@ -310,12 +368,13 @@ export default function IntegrationsClient({
           <p className="muted text-sm">
             {isLocalhost
               ? "Use a public URL and connect Zapier above to see tools."
-              : "No tools yet. Sign in or connect your Zapier account in the embed above; your app tools will then appear in the two zones."}
+              : "No tools yet. Connect Zapier above."}
           </p>
         )}
 
         <form action="/api/setup/integrations" method="post" className="stack integrations-zones__form" onSubmit={() => setIsSubmitting(true)}>
           <input type="hidden" name="redirectTo" defaultValue="" />
+          <input type="hidden" name="geminiModel" value={geminiModel} />
           {Array.from(inputContext).map((c) => (
             <input key={`in-${c}`} type="hidden" name="inputContextTools" value={c} />
           ))}
@@ -326,11 +385,14 @@ export default function IntegrationsClient({
             <StatusBanner
               variant="info"
               title="Saving integrations"
-              message="Your tool selections are being stored before the next step opens."
+              message="Saving changes."
             />
           ) : null}
           <div className="row" style={{ marginTop: "0.5rem", flexWrap: "wrap", gap: "0.5rem" }}>
             <button type="submit" className="btn primary" disabled={isSubmitting}>
+              <span className="material-symbols-rounded btn__icon" aria-hidden>
+                arrow_forward
+              </span>
               {isSubmitting ? "Saving…" : "Confirm & next"}
             </button>
             <button
@@ -344,9 +406,17 @@ export default function IntegrationsClient({
                 form?.requestSubmit();
               }}
             >
+              <span className="material-symbols-rounded btn__icon" aria-hidden>
+                dashboard
+              </span>
               {isSubmitting ? "Saving…" : "Save and go to dashboard"}
             </button>
-            <Link className="btn secondary" href="/setup/high-level">Skip for now</Link>
+            <Link className="btn secondary" href="/setup/stakeholders">
+              <span className="material-symbols-rounded btn__icon" aria-hidden>
+                skip_next
+              </span>
+              Skip for now
+            </Link>
           </div>
         </form>
       </section>

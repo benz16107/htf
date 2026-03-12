@@ -5,9 +5,12 @@ import { StatusBanner } from "@/components/StatusBanner";
 import { getSession } from "@/lib/auth";
 import Link from "next/link";
 import { db } from "@/lib/db";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 import { OverviewActivityHead } from "./OverviewActivityHead";
 import { OverviewAutonomousToggle } from "./OverviewAutonomousToggle";
+import { OverviewModelQuickSelect } from "./OverviewModelQuickSelect";
 import { OverviewReceivedSignals } from "./OverviewReceivedSignals";
+import { OverviewSupplyChainStatus } from "./OverviewSupplyChainStatus";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +26,7 @@ export default async function DashboardHomePage({
   let pendingMitigations = 0;
   let activeRiskCases = 0;
   let automationLevel = "off";
+  let geminiModel = await getGeminiModelForCompany(session?.companyId);
   let signalSources: "internal_only" | "external_only" | "both" = "both";
   let lastRun: {
     runId: string;
@@ -110,21 +114,21 @@ export default async function DashboardHomePage({
         <StatusBanner
           variant="success"
           title="Base profile saved"
-          message="Your company profile changes were saved and are now reflected in the dashboard."
+          message="Changes saved."
         />
       ) : null}
       {saved === "integrations" ? (
         <StatusBanner
           variant="success"
           title="Integrations saved"
-          message="Your tool assignments were saved and are ready for the agent to use."
+          message="Changes saved."
         />
       ) : null}
       {saved === "high-level" ? (
         <StatusBanner
           variant="success"
           title="High-level profile saved"
-          message="Your latest setup edits are saved and available across the dashboard."
+          message="Changes saved."
         />
       ) : null}
 
@@ -174,37 +178,29 @@ export default async function DashboardHomePage({
         <section className="card overview-activity" data-animate-panel>
           <OverviewActivityHead />
           {lastRun ? (
-            <div className="overview-activity__run" style={{ padding: "1.25rem" }}>
+            <div className="overview-activity__run overview-activity__run-content">
               <p className="text-sm" style={{ margin: 0 }}>
                 <strong>{lastRun.processed}</strong> processed · <strong>{lastRun.created}</strong> risk cases created · <strong>{lastRun.executed}</strong> plans executed
               </p>
-              {(() => {
-                const parts = [
-                  lastRun.internalCandidates != null && lastRun.internalCandidates > 0 && `${lastRun.internalCandidates} internal`,
-                  lastRun.externalCandidates != null && lastRun.externalCandidates > 0 && `${lastRun.externalCandidates} external`,
-                ].filter(Boolean) as string[];
-                return parts.length > 0 ? (
-                  <p className="text-xs muted" style={{ margin: "0.35rem 0 0 0" }}>
-                    From {parts.join(", ")} signals
-                  </p>
-                ) : null;
-              })()}
-              {lastRun.skipReasonsCount != null && lastRun.skipReasonsCount > 0 && (
-                <p className="text-xs muted" style={{ margin: "0.25rem 0 0 0" }}>
-                  {lastRun.skipReasonsCount} skipped or issue{lastRun.skipReasonsCount === 1 ? "" : "s"}
-                </p>
-              )}
               <p className="text-xs muted" style={{ margin: "0.35rem 0 0 0" }}>
                 {formatRunTime(lastRun.at)}
               </p>
-              <Link href="/dashboard/logs" className="btn secondary btn-sm" style={{ marginTop: "0.75rem" }}>
+              <Link href="/dashboard/logs" className="btn secondary btn-sm overview-activity__run-link">
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  visibility
+                </span>
                 View run
               </Link>
             </div>
           ) : (
             <div className="overview-activity__empty stack-sm">
-              <p className="muted text-sm">No runs yet.</p>
-              <Link href="/dashboard/logs" className="btn primary btn-sm">Autonomous agent</Link>
+              <p className="muted text-sm">No runs.</p>
+              <Link href="/dashboard/logs" className="btn primary btn-sm">
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  smart_toy
+                </span>
+                Autonomous agent
+              </Link>
             </div>
           )}
         </section>
@@ -212,20 +208,34 @@ export default async function DashboardHomePage({
         <aside className="overview-sidebar" data-animate-panel>
           <section className="card overview-cta">
             <h3 className="overview-cta__title" style={{ margin: 0 }}>Quick actions</h3>
-            <div className="stack-sm" style={{ marginTop: "0.75rem" }}>
+            <div className="stack-sm overview-cta__actions">
+              <OverviewModelQuickSelect initialGeminiModel={geminiModel} />
               <Link href="/dashboard/triggered-risk" className="btn primary btn-sm block">
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  warning
+                </span>
                 Signals &amp; risk
               </Link>
               <Link href="/dashboard/plans" className="btn secondary btn-sm block">
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  task_alt
+                </span>
                 Mitigation plans
               </Link>
               <Link href="/dashboard/logs" className="btn secondary btn-sm block">
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  smart_toy
+                </span>
                 Autonomous agent
               </Link>
             </div>
           </section>
         </aside>
       </AnimeStagger>
+
+      <div>
+        <OverviewSupplyChainStatus />
+      </div>
 
       <div>
         <OverviewReceivedSignals signalSources={signalSources} />

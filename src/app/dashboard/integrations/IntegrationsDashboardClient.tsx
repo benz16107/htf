@@ -7,17 +7,20 @@ import { DirectEmailConnectionCard } from "@/components/DirectEmailConnectionCar
 import { StatusBanner } from "@/components/StatusBanner";
 import { SuggestedIntegrationsBox } from "@/components/SuggestedIntegrationsBox";
 import { ZapierMcpEmbed } from "@/components/ZapierMcpEmbed";
+import { GEMINI_MODEL_OPTIONS, type GeminiModelId } from "@/lib/gemini-models";
 import { getSuggestedZoneForTool, getSuggestedZoneLabel, groupToolsByApp } from "@/lib/integration-tool-hint";
 
 type Props = {
   initialInputContextTools: string[];
   initialExecutionTools: string[];
+  initialGeminiModel: GeminiModelId;
   userEmail?: string;
 };
 
 export default function IntegrationsDashboardClient({
   initialInputContextTools,
   initialExecutionTools,
+  initialGeminiModel,
   userEmail,
 }: Props) {
   const [mcpTools, setMcpTools] = useState<{ name: string; description?: string }[]>([]);
@@ -26,6 +29,7 @@ export default function IntegrationsDashboardClient({
   const [execution, setExecution] = useState<Set<string>>(new Set(initialExecutionTools));
   const [isLocalhost, setIsLocalhost] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [geminiModel, setGeminiModel] = useState<GeminiModelId>(initialGeminiModel);
   const [saveStatus, setSaveStatus] = useState<{
     variant: "info" | "success" | "error";
     title: string;
@@ -78,14 +82,15 @@ export default function IntegrationsDashboardClient({
     setIsSaving(true);
     setSaveStatus({
       variant: "info",
-      title: "Saving integration assignments",
-      message: "Updating which tools the agent can use for context and execution.",
+      title: "Saving integrations",
+      message: "Saving changes.",
     });
 
     try {
       const formData = new FormData();
       for (const tool of inputContext) formData.append("inputContextTools", tool);
       for (const tool of execution) formData.append("executionTools", tool);
+      formData.append("geminiModel", geminiModel);
 
       const res = await fetch("/api/dashboard/integrations", {
         method: "POST",
@@ -100,7 +105,7 @@ export default function IntegrationsDashboardClient({
       setSaveStatus({
         variant: "success",
         title: "Integrations saved",
-        message: "Your tool role assignments are ready for the agent to use.",
+        message: "Changes saved.",
       });
     } catch (error) {
       setSaveStatus({
@@ -129,6 +134,44 @@ export default function IntegrationsDashboardClient({
         <DirectEmailConnectionCard />
       </div>
 
+      <section className="card stack" data-animate-section>
+        <h3>AI model preference</h3>
+        <p className="muted text-sm" style={{ margin: 0 }}>
+          Choose speed or higher reasoning quality for Gemini-powered analysis.
+        </p>
+        <div
+          className="model-choice-group"
+          role="radiogroup"
+          aria-label="Gemini model"
+          style={{ marginTop: "0.5rem" }}
+        >
+          {GEMINI_MODEL_OPTIONS.map((option) => {
+            const selected = option.id === geminiModel;
+            return (
+              <label
+                key={option.id}
+                className={`model-choice ${selected ? "is-selected" : ""}`}
+                aria-checked={selected}
+              >
+                <input
+                  type="radio"
+                  name="geminiModelUi"
+                  checked={selected}
+                  onChange={() => setGeminiModel(option.id)}
+                />
+                <span className="model-choice__content">
+                  <span className="model-choice__title">{option.label}</span>
+                  <span className="model-choice__id">{option.id}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        <p className="muted text-xs" style={{ margin: 0 }}>
+          {GEMINI_MODEL_OPTIONS.find((option) => option.id === geminiModel)?.description}
+        </p>
+      </section>
+
       {embedId && (
         <section className="card stack" data-animate-section>
           <h3>Connect Zapier (MCP)</h3>
@@ -154,7 +197,7 @@ export default function IntegrationsDashboardClient({
 
       <section className="integrations-zones" data-animate-section>
         <h3 className="integrations-zones__title">Assign tools to roles</h3>
-        <p className="muted text-sm integrations-zones__subtitle">Input context = gather data. Execution = take action.</p>
+        <p className="muted text-sm integrations-zones__subtitle">Input context = read. Execution = act.</p>
 
         {toolsLoading ? (
           <p className="muted text-sm">Loading tools…</p>
@@ -170,15 +213,21 @@ export default function IntegrationsDashboardClient({
                       className="btn secondary btn-sm"
                       onClick={() => setInputContext(new Set(mcpTools.slice(0, 50).map((t) => t.name)))}
                     >
+                      <span className="material-symbols-rounded btn__icon" aria-hidden>
+                        select_all
+                      </span>
                       Select all
                     </button>
                     <button type="button" className="btn secondary btn-sm" onClick={() => setInputContext(new Set())}>
+                      <span className="material-symbols-rounded btn__icon" aria-hidden>
+                        deselect
+                      </span>
                       Deselect all
                     </button>
                   </div>
                 </div>
                 <p className="muted text-sm integrations-zone__desc">
-                  Used to automatically retrieve context (inbox, CRM, ERP). Find, search, list, get—not archive or send.
+                  Used to gather context.
                 </p>
                 <div className="integrations-zone__list">
                   {groupToolsByApp(mcpTools.slice(0, 50)).map(({ appKey, appLabel, tools: appTools }) => (
@@ -198,6 +247,9 @@ export default function IntegrationsDashboardClient({
                               setInputContext((prev) => new Set([...prev, ...appTools.map((t) => t.name)]));
                             }}
                           >
+                            <span className="material-symbols-rounded btn__icon" aria-hidden>
+                              select_all
+                            </span>
                             Select all
                           </button>
                           <button
@@ -214,6 +266,9 @@ export default function IntegrationsDashboardClient({
                               });
                             }}
                           >
+                            <span className="material-symbols-rounded btn__icon" aria-hidden>
+                              deselect
+                            </span>
                             Clear
                           </button>
                         </span>
@@ -254,15 +309,21 @@ export default function IntegrationsDashboardClient({
                       className="btn secondary btn-sm"
                       onClick={() => setExecution(new Set(mcpTools.slice(0, 50).map((t) => t.name)))}
                     >
+                      <span className="material-symbols-rounded btn__icon" aria-hidden>
+                        select_all
+                      </span>
                       Select all
                     </button>
                     <button type="button" className="btn secondary btn-sm" onClick={() => setExecution(new Set())}>
+                      <span className="material-symbols-rounded btn__icon" aria-hidden>
+                        deselect
+                      </span>
                       Deselect all
                     </button>
                   </div>
                 </div>
                 <p className="muted text-sm integrations-zone__desc">
-                  Agent can take action via mitigation plans (e.g. send email, update ticket). Archive, send, draft, reply belong here.
+                  Used to take action.
                 </p>
                 <div className="integrations-zone__list">
                   {groupToolsByApp(mcpTools.slice(0, 50)).map(({ appKey, appLabel, tools: appTools }) => (
@@ -282,6 +343,9 @@ export default function IntegrationsDashboardClient({
                               setExecution((prev) => new Set([...prev, ...appTools.map((t) => t.name)]));
                             }}
                           >
+                            <span className="material-symbols-rounded btn__icon" aria-hidden>
+                              select_all
+                            </span>
                             Select all
                           </button>
                           <button
@@ -298,6 +362,9 @@ export default function IntegrationsDashboardClient({
                               });
                             }}
                           >
+                            <span className="material-symbols-rounded btn__icon" aria-hidden>
+                              deselect
+                            </span>
                             Clear
                           </button>
                         </span>
@@ -338,9 +405,17 @@ export default function IntegrationsDashboardClient({
             {saveStatus ? <StatusBanner variant={saveStatus.variant} title={saveStatus.title} message={saveStatus.message} /> : null}
             <div className="row" style={{ marginTop: "0.5rem" }}>
               <button type="submit" className="btn primary btn-sm" disabled={isSaving}>
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  save
+                </span>
                 {isSaving ? "Saving…" : "Save"}
               </button>
-              <Link className="btn secondary btn-sm" href="/dashboard">Back to dashboard</Link>
+              <Link className="btn secondary btn-sm" href="/dashboard">
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  dashboard
+                </span>
+                Back to dashboard
+              </Link>
             </div>
           </form>
         ) : (
@@ -351,7 +426,12 @@ export default function IntegrationsDashboardClient({
       </section>
 
       <div data-animate-section>
-        <Link href="/setup/integrations" className="btn secondary btn-sm">Full setup workflow</Link>
+        <Link href="/setup/integrations" className="btn secondary btn-sm">
+          <span className="material-symbols-rounded btn__icon" aria-hidden>
+            checklist
+          </span>
+          Full setup workflow
+        </Link>
       </div>
     </AnimeStagger>
   );

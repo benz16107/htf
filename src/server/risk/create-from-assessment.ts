@@ -137,7 +137,8 @@ export async function createRiskCaseFromAssessment(
     } catch (scenarioErr: unknown) {
       const msg = scenarioErr instanceof Error ? scenarioErr.message : String(scenarioErr);
       if (msg.includes("planOutline") && msg.includes("Unknown argument")) {
-        const { planOutline: _omit, ...dataWithoutOutline } = scenarioData as typeof scenarioData & { planOutline?: unknown };
+        const dataWithoutOutline = { ...scenarioData } as typeof scenarioData & { planOutline?: unknown };
+        delete dataWithoutOutline.planOutline;
         await db.scenario.create({ data: dataWithoutOutline });
       } else {
         throw scenarioErr;

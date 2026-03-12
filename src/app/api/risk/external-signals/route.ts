@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { GoogleGenAI } from "@google/genai";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "",
@@ -133,7 +134,10 @@ function buildCompanyContextBlock(ctx: CompanyContext): string {
   return parts.join("\n");
 }
 
-async function pullFromWeb(companyContext: CompanyContext | null): Promise<ExternalSignalItem[]> {
+async function pullFromWeb(
+  companyContext: CompanyContext | null,
+  model: string,
+): Promise<ExternalSignalItem[]> {
   const contextBlock = companyContext
     ? `\n\nCRITICAL: Use this company profile. Return ONLY news that is clearly relevant to THIS company's sector, supply chain, regions, or suppliers. Exclude generic or tangentially related items. Prefer 4–6 highly relevant signals over many marginal ones.\n${buildCompanyContextBlock(companyContext)}\n\n`
     : "\n\nReturn only 4–6 items. Exclude generic filler; include only developments that are clearly relevant to supply chain risk (shipping, ports, suppliers, key regions, sector).\n\n";
@@ -147,7 +151,7 @@ async function pullFromWeb(companyContext: CompanyContext | null): Promise<Exter
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model,
       contents: prompt,
       config: { responseMimeType: "application/json" },
     });
@@ -203,7 +207,8 @@ export async function POST() {
       }
     : null;
 
-  const pulled = await pullFromWeb(companyContext);
+  const model = await getGeminiModelForCompany(companyId);
+  const pulled = await pullFromWeb(companyContext, model);
 
   const existing = await db.savedExternalSignal.findMany({
     where: { companyId },

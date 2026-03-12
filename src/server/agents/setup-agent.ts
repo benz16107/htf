@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { z } from "zod";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 import { buildSetupPrompt } from "./prompts";
 
 const ai = new GoogleGenAI({
@@ -7,6 +7,7 @@ const ai = new GoogleGenAI({
 });
 
 export type SetupAgentInput = {
+  companyId?: string;
   companyName: string;
   sector: string;
   companyType: string;
@@ -31,8 +32,9 @@ export async function runSetupAgent(input: SetupAgentInput): Promise<SetupAgentR
   });
 
   try {
+    const model = await getGeminiModelForCompany(input.companyId);
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model,
       contents: promptText,
       config: {
         responseMimeType: "application/json",

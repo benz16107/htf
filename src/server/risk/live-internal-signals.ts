@@ -162,10 +162,12 @@ export async function triggerAutonomousRunForEvents({
   const mode = normalizeInternalMode((config as { internalSignalMode?: string } | null)?.internalSignalMode);
   const sources = normalizeSignalSources(config?.signalSources);
   const level = config?.automationLevel ?? "off";
-  if (mode !== "live" || (sources !== "internal_only" && sources !== "both") || level === "off") {
+  const running = Boolean(config?.agentRunning);
+  if (!running || mode !== "live" || (sources !== "internal_only" && sources !== "both") || level === "off") {
     console.info(
-      "[live-trigger] skip company=%s mode=%s sources=%s level=%s events=%d",
+      "[live-trigger] skip company=%s running=%s mode=%s sources=%s level=%s events=%d",
       companyId,
+      running,
       mode,
       sources,
       level,

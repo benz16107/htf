@@ -120,14 +120,11 @@ export function OverviewReceivedSignals({
   return (
     <section className="card stack">
       <div className="row between gap-sm" style={{ alignItems: "center", flexWrap: "wrap" }}>
-        <div className="stack-xs">
+        <div className="row gap-xs" style={{ alignItems: "center", flexWrap: "wrap" }}>
           <h3 style={{ margin: 0 }}>Received signals</h3>
-          <p className="text-sm muted" style={{ margin: 0 }}>
-            Autonomous retrieval of new external and internal signals.
-          </p>
+          {lastSyncAt ? <span className="text-xs muted">Updated {formatRelativeTime(lastSyncAt)}</span> : null}
         </div>
         <div className="row gap-xs" style={{ alignItems: "center", flexWrap: "wrap" }}>
-          {lastSyncAt ? <span className="text-xs muted">Updated {formatRelativeTime(lastSyncAt)}</span> : null}
           <button type="button" className="btn secondary btn-sm" onClick={() => void refreshSignals(true)} disabled={syncing}>
             {syncing ? "Syncing…" : "Sync now"}
           </button>
@@ -146,7 +143,7 @@ export function OverviewReceivedSignals({
         }}
       >
         {showExternalSignals ? (
-          <div className="card-flat stack-sm" style={{ padding: "1rem", minHeight: 240 }}>
+          <div className="card-flat stack-sm" style={{ padding: "0.75rem", minHeight: 180 }}>
             <div className="row between" style={{ alignItems: "center", gap: "0.5rem" }}>
               <h4 className="text-sm uppercase muted" style={{ margin: 0 }}>External signals</h4>
               <span className="badge">{externalSignals.length}</span>
@@ -157,7 +154,7 @@ export function OverviewReceivedSignals({
               <p className="muted text-sm">No external signals received yet.</p>
             ) : (
               <div className="stack-xs">
-                {externalSignals.slice(0, 8).map((signal, idx) => (
+                {externalSignals.slice(0, 4).map((signal, idx) => (
                   <div key={signal.id ?? `external-${idx}`} className="card-flat stack-2xs" style={{ padding: "0.6rem 0.75rem" }}>
                     <p className="text-sm font-medium" style={{ margin: 0 }}>{signal.title || "External signal"}</p>
                     <p className="text-xs muted" style={{ margin: 0 }}>
@@ -172,7 +169,7 @@ export function OverviewReceivedSignals({
         ) : null}
 
         {showInternalSignals ? (
-          <div className="card-flat stack-sm" style={{ padding: "1rem", minHeight: 240 }}>
+          <div className="card-flat stack-sm" style={{ padding: "0.75rem", minHeight: 180 }}>
             <div className="row between" style={{ alignItems: "center", gap: "0.5rem" }}>
               <h4 className="text-sm uppercase muted" style={{ margin: 0 }}>Internal signals</h4>
               <span className="badge">{internalSignals.length}</span>
@@ -183,7 +180,7 @@ export function OverviewReceivedSignals({
               <p className="muted text-sm">No internal signals received yet.</p>
             ) : (
               <div className="stack-xs">
-                {internalSignals.slice(0, 8).map((signal) => (
+                {internalSignals.slice(0, 4).map((signal) => (
                   <div key={signal.id} className="card-flat stack-2xs" style={{ padding: "0.6rem 0.75rem" }}>
                     <p className="text-sm font-medium" style={{ margin: 0 }}>{signal.signal || "Internal signal"}</p>
                     <p className="text-xs muted" style={{ margin: 0 }}>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "",
@@ -68,8 +69,9 @@ Return JSON in this exact shape:
 {"inputContextSuggestions":["Gmail","Slack",...],"executionSuggestions":["Gmail","Slack",...]}`;
 
   try {
+    const model = await getGeminiModelForCompany(session.companyId);
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model,
       contents: prompt,
       config: { responseMimeType: "application/json" },
     });

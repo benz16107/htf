@@ -9,13 +9,13 @@ Multi-tenant supply chain risk platform with:
 
 ## Design
 
-Token-based design system in `src/app/globals.css`. A Pencil design kit is in **`designs/htf-design-kit.pen`** (Pentagon)—open it in the [Pencil extension](https://pencil.dev) to edit variables and designs. See `DESIGN_SYSTEM.md` for token reference and sync notes.
+Token-based design system in `src/app/globals.css` with a minimal Google Workspace-style direction (Material 3 foundations, restrained surfaces, icon+label controls, shared app shells). See `DESIGN_SYSTEM.md` for current tokens and component rules.
 
 ## Stack
 
 - Next.js (App Router) + TypeScript
 - Prisma ORM + PostgreSQL
-- Clerk managed auth (env-gated) + demo-cookie fallback for local development
+- Built-in email/password auth with secure HTTP-only session cookies
 - Gemini/Backboard adapters scaffolded in `src/server`
 
 ## Local Run
@@ -81,10 +81,10 @@ Visit http://localhost:3000.
 
 4. **Set all env vars** in Vercel (Production + Preview if you want):
    - `DATABASE_URL`, `NEXT_PUBLIC_APP_URL` (e.g. `https://your-app.vercel.app`)
-   - `AUTH_PROVIDER`, `AUTH_SECRET`
-   - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (if using Supabase auth)
-   - `GEMINI_API_KEY`, `BACKBOARD_API_KEY` (if used)
+   - `SESSION_SECRET` (required for signed auth sessions)
+   - `GEMINI_API_KEY`, `GEMINI_MODEL` (optional global default), `BACKBOARD_API_KEY` (if used)
    - `NEXT_PUBLIC_ZAPIER_MCP_EMBED_ID`, `ZAPIER_MCP_EMBED_SECRET` (for Zapier MCP embed)
+   - `INTERNAL_API_SECRET` (recommended for internal autonomous/live-ingest route auth)
    - `CRON_SECRET` – required for the autonomous agent to keep running in the background when no one is on the page. Vercel Cron hits `/api/cron/autonomous` every 2 minutes and sends this as a Bearer token; set it in Vercel env and the cron will run for all companies with the agent turned on.
 
 5. **Zapier MCP embed**  
@@ -94,9 +94,8 @@ Redeploy after changing env vars.
 
 ## Current Auth Mode
 
-- Managed auth path: Clerk (enabled automatically when Clerk env vars are set).
-- Fallback path: development demo sign-in route at `/sign-in` with secure
-	HTTP-only session cookies.
+- Built-in email/password auth at `/sign-in` and `/sign-up`.
+- Auth sessions are signed and stored in secure HTTP-only cookies (`SESSION_SECRET` required).
 - The app uses a single company-account model: one company creates one account
 	and that account owns setup/dashboard access.
 
@@ -111,8 +110,7 @@ Setup wizard data now persists to PostgreSQL using Prisma tables:
 
 The setup review/profile pages read directly from the database.
 
-Legacy setup cookies have been removed from the setup flow. Only the demo auth
-session cookie remains for fallback mode.
+Legacy setup cookies have been removed from the setup flow.
 
 ## Key Paths
 

@@ -5,17 +5,6 @@ import { ConfirmModal } from "@/components/ConfirmModal";
 import { groupToolsByApp } from "@/lib/integration-tool-hint";
 import type { SelectedSignal } from "./types";
 
-const EXTERNAL_AUTO_SCAN_STORAGE_KEY = "risk-external-auto-scan";
-const EXTERNAL_CONFIG_KEY = "risk-external-config";
-
-const INTERVAL_OPTIONS = [
-  { value: 5, label: "5 min" },
-  { value: 10, label: "10 min" },
-  { value: 15, label: "15 min" },
-  { value: 30, label: "30 min" },
-  { value: 60, label: "1 hour" },
-] as const;
-
 type ExternalSignalItem = {
   id?: string;
   title: string;
@@ -28,37 +17,6 @@ type ExternalSignalItem = {
 type Props = {
   onAddToAssessment?: (item: SelectedSignal) => void;
 };
-
-function getStoredExternalAutoScan(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return localStorage.getItem(EXTERNAL_AUTO_SCAN_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-type ExternalConfig = { intervalMinutes: number };
-
-function getStoredExternalConfig(): ExternalConfig {
-  if (typeof window === "undefined") return { intervalMinutes: 5 };
-  try {
-    const raw = localStorage.getItem(EXTERNAL_CONFIG_KEY);
-    if (!raw) return { intervalMinutes: 5 };
-    const parsed = JSON.parse(raw) as { intervalMinutes?: number };
-    const min = parsed?.intervalMinutes;
-    if (typeof min === "number" && INTERVAL_OPTIONS.some((o) => o.value === min)) return { intervalMinutes: min };
-    return { intervalMinutes: 5 };
-  } catch {
-    return { intervalMinutes: 5 };
-  }
-}
-
-function setStoredExternalConfig(config: ExternalConfig) {
-  try {
-    localStorage.setItem(EXTERNAL_CONFIG_KEY, JSON.stringify(config));
-  } catch {}
-}
 
 function formatPulledTime(iso: string): string {
   const d = new Date(iso);
@@ -117,6 +75,9 @@ function ExternalSignalRow({
                 })
               }
             >
+              <span className="material-symbols-rounded btn__icon" aria-hidden>
+                playlist_add
+              </span>
               Add to risk assessment
             </button>
           )}
@@ -128,6 +89,9 @@ function ExternalSignalRow({
               title="Remove this signal"
               aria-label="Remove signal"
             >
+              <span className="material-symbols-rounded btn__icon" aria-hidden>
+                delete
+              </span>
               Remove
             </button>
           )}
@@ -144,15 +108,11 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
-  const [autoScan, setAutoScan] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
-  const [intervalMinutes, setIntervalMinutes] = useState(5);
   const [clearingAll, setClearingAll] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<null | { type: "one"; id: string } | { type: "all" }>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [configuredTools, setConfiguredTools] = useState<string[]>([]);
-  const [prefsDirty, setPrefsDirty] = useState(false);
-  const [prefsSavedAt, setPrefsSavedAt] = useState<number | null>(null);
   const mounted = useRef(true);
 
   const fetchToolSelections = useCallback(async () => {
@@ -239,8 +199,6 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
 
   useEffect(() => {
     mounted.current = true;
-    setAutoScan(getStoredExternalAutoScan());
-    setIntervalMinutes(getStoredExternalConfig().intervalMinutes);
     return () => { mounted.current = false; };
   }, []);
 
@@ -248,32 +206,8 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
     loadSaved();
   }, [loadSaved]);
 
-  useEffect(() => {
-    if (!autoScan) return;
-    pullFromWeb();
-    const ms = intervalMinutes * 60 * 1000;
-    const t = setInterval(() => {
-      if (mounted.current) pullFromWeb();
-    }, ms);
-    return () => clearInterval(t);
-  }, [autoScan, intervalMinutes, pullFromWeb]);
-
-  const handleToggleAutoScan = () => {
-    const next = !autoScan;
-    setAutoScan(next);
-    try {
-      localStorage.setItem(EXTERNAL_AUTO_SCAN_STORAGE_KEY, next ? "1" : "0");
-    } catch {}
-  };
-
   const handlePullManual = () => {
     pullFromWeb();
-  };
-
-  const savePreferences = () => {
-    setStoredExternalConfig({ intervalMinutes });
-    setPrefsDirty(false);
-    setPrefsSavedAt(Date.now());
   };
 
   const confirmDeleteOpen = confirmDelete !== null;
@@ -332,65 +266,30 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
             onClick={() => { setConfigOpen((o) => !o); setExpanded(true); }}
             aria-expanded={configOpen}
           >
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              tune
+            </span>
             Configure
           </button>
-          <label className="row" style={{ alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.875rem" }}>
-            <input
-              type="checkbox"
-              checked={autoScan}
-              onChange={handleToggleAutoScan}
-              aria-label="Auto scan external signals"
-            />
-            <span className={autoScan ? "" : "muted"}>Auto scan</span>
-          </label>
-          {autoScan ? (
-            <span className="muted text-sm">{refreshing ? "Pulling…" : `Auto pulling every ${intervalMinutes} min`}</span>
-          ) : (
-            <button
-              type="button"
-              className="btn primary btn-sm"
-              onClick={handlePullManual}
-              disabled={refreshing}
-            >
-              {refreshing ? "Pulling…" : "Pull from web"}
-            </button>
-          )}
+          <button
+            type="button"
+            className="btn primary btn-sm"
+            onClick={handlePullManual}
+            disabled={refreshing}
+          >
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              public
+            </span>
+            {refreshing ? "Pulling…" : "Pull from web"}
+          </button>
         </div>
       </div>
       {expanded && (
         <>
           {configOpen && (
-            <div className="card-flat stack-sm" style={{ margin: "0 1.25rem 0.5rem", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--border)" }}>
-              <p className="text-sm font-medium" style={{ margin: 0 }}>Auto scan interval</p>
-              <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.35rem" }}>
-                {INTERVAL_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={intervalMinutes === opt.value ? "btn primary btn-sm" : "btn secondary btn-sm"}
-                    onClick={() => {
-                      setIntervalMinutes(opt.value);
-                      setPrefsDirty(true);
-                      setPrefsSavedAt(null);
-                    }}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              <div className="row gap-xs" style={{ marginTop: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  className="btn primary btn-sm"
-                  onClick={savePreferences}
-                  disabled={!prefsDirty}
-                >
-                  Save preferences
-                </button>
-                {prefsSavedAt ? <span className="text-xs muted">Saved</span> : null}
-              </div>
+            <div className="stack-sm" style={{ margin: "0 1.25rem 0.5rem", padding: "0.5rem 0.75rem" }}>
               <p className="text-sm font-medium" style={{ margin: "0.75rem 0 0 0" }}>Input context tools</p>
-              <p className="text-xs muted" style={{ margin: "0.25rem 0 0 0" }}>Tools used for external signal context. Manage in Dashboard → Integrations.</p>
+              <p className="text-xs muted" style={{ margin: "0.25rem 0 0 0" }}>Managed in Dashboard -&gt; Integrations.</p>
               {configuredTools.length === 0 ? (
                 <p className="muted text-xs" style={{ margin: "0.35rem 0 0 0" }}>None configured.</p>
               ) : (
@@ -418,6 +317,9 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
                 disabled={clearingAll || signals.length === 0}
                 onClick={() => signals.length > 0 && setConfirmDelete({ type: "all" })}
               >
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  delete_sweep
+                </span>
                 {clearingAll ? "Removing…" : "Remove all signals"}
               </button>
             </div>
@@ -431,9 +333,7 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
             {loading ? (
               <p className="muted text-sm">Loading…</p>
             ) : signals.length === 0 ? (
-              <p className="muted text-sm">
-                {autoScan ? "No signals yet. Auto scan is on." : "No signals. Turn on Auto scan or Pull from web."}
-              </p>
+              <p className="muted text-sm">No signals.</p>
             ) : (
               <>
                 {onAddToAssessment && (
@@ -452,6 +352,9 @@ export function ExternalSignalSection({ onAddToAssessment }: Props) {
                         })
                       }
                     >
+                      <span className="material-symbols-rounded btn__icon" aria-hidden>
+                        playlist_add
+                      </span>
                       Add all to risk assessment
                     </button>
                   </div>

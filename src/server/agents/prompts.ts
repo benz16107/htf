@@ -24,6 +24,7 @@ type MitigationPromptArgs = {
   inputContextNote: string;
   triggerType: string;
   entityMapJson: string;
+  financialImpactJson: string;
   severity: string;
   scenarioName: string;
   recommendationPath: string;
@@ -76,7 +77,7 @@ export function buildSignalRiskPrompt(args: SignalRiskPromptArgs): string {
     
         ## Task
         Summarize the risk in one short phrase (e.g. "Supplier delay risk", "Port disruption - Asia routes") as "issueTitle". Identify "keyStakeholders": an array of 3-8 key parties affected or who need to be informed (e.g. "Procurement", "Operations", "Customer X", "Logistics"). Identify "potentialLosses": an array of 3-8 concrete potential losses (e.g. "Revenue at risk from delayed orders", "Contract penalties with key account", "Margin erosion on affected SKUs", "Reputation damage if OTIF drops"). For each scenario, include "plannedTasks": an array of 3-6 items. Each item must have "task" (short description) and "executionType" (one of: "email", "notification", "summary", "insight", "recommendation", "zapier_mcp", "api", "webhook").
-        You MUST also provide exact, detailed reasoning for every number and result. In "reasoning", explain in plain language: (1) why you chose this probability and confidence, citing specific signals or evidence-when you use live data from the MCP integrations above, say which source (e.g. Gmail, Google Sheets) you used; (2) why you chose this severity and timeline, and which affected areas drive it; (3) how you derived revenue at risk and margin erosion. Reason about which parts of the live data are relevant to this signal; use only those. Be specific-reference the input signals, company context, and any relevant MCP data. Then return your output strictly as JSON matching the following schema. Do not include any markdown formatting, code blocks, comments, or extra text. Only output the JSON object, nothing else.
+        You MUST also provide exact, detailed reasoning for every number and result. In "reasoning", explain in plain language: (1) why you chose this probability and confidence, citing specific signals or evidence; when you use live data from the MCP integrations above, name the source (e.g. Gmail, Google Sheets); (2) why you chose this severity and timeline, and which affected areas drive it; (3) how you derived revenue at risk and margin erosion. Reason about which parts of the live data are relevant to this signal and use only those. Be specific, and reference the input signals, company context, and any relevant MCP data. Then return your output strictly as JSON matching the following schema. Do not include any markdown formatting, code blocks, comments, or extra text. Only output the JSON object, nothing else.
         {
           "issueTitle": string,
           "keyStakeholders": string[],
@@ -131,6 +132,7 @@ export function buildMitigationPrompt(args: MitigationPromptArgs): string {
     ## The Incident Context
     Trigger: ${args.triggerType}
     Details: ${args.entityMapJson}
+    Financial impact baseline: ${args.financialImpactJson}
     Severity: ${args.severity}
     
     ## The Selected Strategy

@@ -109,37 +109,14 @@ export default function MitigationPlansClient({
         onCancel={() => setConfirmBulkDeleteOpen(false)}
       />
 
-      {allCases.length > 0 && (
-        <section className="card-flat row" style={{ justifyContent: "space-between", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
-          <p className="text-sm muted" style={{ margin: 0 }}>
-            {selectedCount > 0
-              ? `${selectedCount} mitigation ${selectedCount === 1 ? "plan" : "plans"} selected`
-              : "Select mitigation plans to delete them in bulk."}
-          </p>
-          <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
-            <button type="button" className="btn secondary btn-sm" onClick={selectAll} disabled={allCaseIds.length === 0 || bulkDeleting}>
-              Select all
-            </button>
-            <button type="button" className="btn secondary btn-sm" onClick={clearSelection} disabled={selectedCount === 0 || bulkDeleting}>
-              Clear
-            </button>
-            <button
-              type="button"
-              className="btn danger btn-sm"
-              onClick={() => setConfirmBulkDeleteOpen(true)}
-              disabled={selectedCount === 0 || bulkDeleting}
-            >
-              {bulkDeleting ? "Deleting…" : selectedCount <= 0 ? "Delete selected" : `Delete selected (${selectedCount})`}
-            </button>
-          </div>
-        </section>
-      )}
-
       {activeCases.length === 0 ? (
         <section className="card empty-state">
           <h3>No current cases</h3>
           <p>Disruption cases will appear here for approval.</p>
           <Link href="/dashboard/triggered-risk" className="btn primary" style={{ marginTop: "1.5rem" }}>
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              warning
+            </span>
             Signals & risk
           </Link>
         </section>
@@ -151,6 +128,36 @@ export default function MitigationPlansClient({
               {activeCases.filter((riskCase) => selectedCaseIds.has(riskCase.id)).length} selected
             </p>
           </div>
+          <section className="card-flat row" style={{ justifyContent: "space-between", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+            <p className="text-sm muted" style={{ margin: 0 }}>
+              {selectedCount > 0 ? `${selectedCount} mitigation ${selectedCount === 1 ? "plan" : "plans"} selected` : ""}
+            </p>
+            <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
+              <button type="button" className="btn secondary btn-sm" onClick={selectAll} disabled={allCaseIds.length === 0 || bulkDeleting}>
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  select_all
+                </span>
+                Select all
+              </button>
+              <button type="button" className="btn secondary btn-sm" onClick={clearSelection} disabled={selectedCount === 0 || bulkDeleting}>
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  deselect
+                </span>
+                Clear
+              </button>
+              <button
+                type="button"
+                className="btn danger btn-sm"
+                onClick={() => setConfirmBulkDeleteOpen(true)}
+                disabled={selectedCount === 0 || bulkDeleting}
+              >
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  delete
+                </span>
+                {bulkDeleting ? "Deleting…" : selectedCount <= 0 ? "Delete selected" : `Delete selected (${selectedCount})`}
+              </button>
+            </div>
+          </section>
           <AnimeStagger className="stack-md" style={{ marginTop: "0.75rem" }} delayStep={0} duration={220} translateY={8} scale={0.995}>
             {activeCases.map((riskCase, index) => (
               <MitigationCard

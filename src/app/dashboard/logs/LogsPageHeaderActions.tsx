@@ -1,18 +1,13 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AgentRunningToggle } from "@/components/AgentRunningToggle";
 import { AgentSettingsModal } from "@/components/AgentSettingsModal";
 
 export function LogsPageHeaderActions() {
   const searchParams = useSearchParams();
-  const [settingsOpen, setSettingsOpen] = useState(false);
-
-  useEffect(() => {
-    if (searchParams?.get("settings") === "1") setSettingsOpen(true);
-  }, [searchParams]);
+  const [settingsOpen, setSettingsOpen] = useState(searchParams?.get("settings") === "1");
 
   const openSettings = () => setSettingsOpen(true);
   const closeSettings = () => {
@@ -31,6 +26,9 @@ export function LogsPageHeaderActions() {
           onClick={openSettings}
           className="btn secondary btn-sm"
         >
+          <span className="material-symbols-rounded btn__icon" aria-hidden>
+            tune
+          </span>
           Agent settings
         </button>
       </div>

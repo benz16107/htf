@@ -62,6 +62,7 @@ const ACTION_TYPES = [
   { value: "email", label: "Email" },
   { value: "notification", label: "Notification" },
   { value: "erp_update", label: "ERP update (simulated)" },
+  { value: "financial_report", label: "Financial report export" },
 ];
 
 function Field({
@@ -216,6 +217,12 @@ export default function AutonomousAgentClient({
     });
     setLastRun(null);
     try {
+      await fetch("/api/risk/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suppressAutonomousTrigger: true }),
+      }).catch(() => null);
+
       const res = await fetch("/api/agents/autonomous/run", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Run failed");

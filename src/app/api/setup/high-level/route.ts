@@ -12,7 +12,13 @@ const sectionKeys = [
   "erpSignalMonitoring",
 ];
 
-export async function GET(request: Request) {
+function getSummary(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const summary = (value as { summary?: unknown }).summary;
+  return typeof summary === "string" ? summary : "";
+}
+
+export async function GET() {
   const session = await getSession();
   if (!session?.companyId) {
     return NextResponse.json({});
@@ -32,12 +38,12 @@ export async function GET(request: Request) {
 
   const data: Record<string, string> = {};
   if (profile) {
-    data.riskClassification = ((profile.existingRiskAnalysis as any)?.summary) || "";
-    data.leadTimeSensitivity = ((profile.leadTimeSensitivity as any)?.summary) || "";
-    data.inventoryBufferPolicies = ((profile.inventoryBufferPolicies as any)?.summary) || "";
-    data.contractStructures = ((profile.contractStructures as any)?.summary) || "";
-    data.customerSLAProfile = ((profile.customerSlaProfile as any)?.summary) || "";
-    data.erpSignalMonitoring = ((profile.erpSignalMonitoring as any)?.summary) || "";
+    data.riskClassification = getSummary(profile.existingRiskAnalysis);
+    data.leadTimeSensitivity = getSummary(profile.leadTimeSensitivity);
+    data.inventoryBufferPolicies = getSummary(profile.inventoryBufferPolicies);
+    data.contractStructures = getSummary(profile.contractStructures);
+    data.customerSLAProfile = getSummary(profile.customerSlaProfile);
+    data.erpSignalMonitoring = getSummary(profile.erpSignalMonitoring);
   }
 
   return NextResponse.json(data);

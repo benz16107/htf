@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 import { BackboardClient } from "../memory/backboard-client";
 import { fetchLiveContextFromZapier } from "../zapier/live-context";
 import { getZapierMCPToolSelections } from "../zapier/mcp-config";
@@ -169,8 +170,9 @@ export async function runSignalRiskAgent(
       // 4. Generate Reasoning & Analysis
       let response;
       try {
+        const model = await getGeminiModelForCompany(companyId);
         response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
+          model,
           contents: promptText,
           config: { responseMimeType: "application/json" }
         });
@@ -403,12 +405,21 @@ export async function runSignalRiskAgent(
 
       // 7. Write transparent reasoning to the Backboard Thread Memory
       if (backboard.isConfigured() && threadId) {
-        await backboard.appendReasoning(threadId, {
-          action: "Risk Case Assessed",
-          inputSignal: safeInput,
-          assessedOutput: output,
-          internalLogic: "Cross-correlated expected duration against inventory buffer policies. Found immediate downstream SLA threat."
-        });
+        try {
+          await backboard.appendReasoning(threadId, {
+            action: "Risk Case Assessed",
+            inputSignal: safeInput,
+            assessedOutput: output,
+            internalLogic: "Cross-correlated expected duration against inventory buffer policies. Found immediate downstream SLA threat."
+          });
+        } catch (memoryError) {
+          // Memory persistence should not fail the user-facing risk assessment response.
+          console.error("Backboard memory append failed; continuing without memory write", {
+            companyId,
+            threadId,
+            error: memoryError,
+          });
+        }
       }
 
       return output;

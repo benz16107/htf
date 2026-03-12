@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 import { getZapierMCPToolSelections } from "@/server/zapier/mcp-config";
 import { fetchLiveContextFromZapier, DEFAULT_MAX_LIVE_CONTEXT_CHARS } from "@/server/zapier/live-context";
 
@@ -70,6 +71,7 @@ export async function POST(request: Request) {
         if (!session?.companyId) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
+        const model = await getGeminiModelForCompany(session.companyId);
 
         const body = await request.json().catch(() => ({}));
         const stepIndex = body.stepIndex as number | undefined;
@@ -162,7 +164,7 @@ Provide your response in JSON format exactly matching these keys: "reasoning" (s
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
                 response = await ai.models.generateContent({
-                    model: "gemini-2.5-flash",
+                    model,
                     contents: promptText,
                     config: {
                         responseMimeType: "application/json",

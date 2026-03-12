@@ -87,7 +87,7 @@ export function SuggestedIntegrationsBox({ mcpTools, onApply, className }: Props
         <h4>Recommended to enable in Zapier</h4>
       </div>
       <p className="muted text-sm suggested-integrations-box__desc">
-        Suggested tools from your profile. Connect apps in the embed, then Apply to pre-fill zones.
+        Suggested from your profile.
       </p>
 
       {loading ? (
@@ -101,7 +101,7 @@ export function SuggestedIntegrationsBox({ mcpTools, onApply, className }: Props
           {suggestions.inputContextSuggestions.length > 0 && (
             <div className="suggested-integrations-box__list">
               <span className="text-xs font-semibold muted uppercase">
-                For input context (read data)
+                Input context
               </span>
               <ul>
                 {suggestions.inputContextSuggestions.map((name) => (
@@ -113,7 +113,7 @@ export function SuggestedIntegrationsBox({ mcpTools, onApply, className }: Props
           {suggestions.executionSuggestions.length > 0 && (
             <div className="suggested-integrations-box__list">
               <span className="text-xs font-semibold muted uppercase">
-                For execution (take action)
+                Execution
               </span>
               <ul>
                 {suggestions.executionSuggestions.map((name) => (
@@ -124,16 +124,13 @@ export function SuggestedIntegrationsBox({ mcpTools, onApply, className }: Props
           )}
           {mcpTools.length > 0 && (
             <div className="suggested-integrations-box__actions">
-              <p className="muted text-xs" style={{ marginBottom: "0.35rem" }}>
-                Already connected apps in the embed? Pre-fill the input context and execution zones below with tools that match these recommendations.
-              </p>
               <div className="row" style={{ gap: "0.5rem" }}>
                 <button
                   type="button"
                   className="btn primary btn-sm"
                   onClick={handleApply}
                 >
-                  Pre-fill zones from suggestions
+                  Apply suggestions
                 </button>
                 <button
                   type="button"
@@ -149,8 +146,7 @@ export function SuggestedIntegrationsBox({ mcpTools, onApply, className }: Props
         </div>
       ) : (
         <p className="muted text-sm">
-          No specific recommendations for this profile. You can enable any Zapier apps that fit
-          your workflow.
+          No recommendations.
         </p>
       )}
     </section>

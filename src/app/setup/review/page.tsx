@@ -5,6 +5,7 @@ import { AppHeader } from "@/components/AppHeader";
 import { StatusBanner } from "@/components/StatusBanner";
 import { getSession } from "@/lib/auth";
 import { getCompanySetupSnapshot } from "@/server/company-setup";
+import type { SupplyChainLink } from "@/lib/supply-chain-links";
 import { ConfirmSetupButton } from "./ConfirmSetupButton";
 
 function DataList({ data }: { data: Record<string, string> | null }) {
@@ -23,6 +24,27 @@ function DataList({ data }: { data: Record<string, string> | null }) {
   );
 }
 
+function SupplyChainLinksList({ links }: { links: SupplyChainLink[] }) {
+  if (!links.length) return <p className="muted text-sm">No links added yet.</p>;
+  return (
+    <div className="stack-sm">
+      {links.map((link, index) => (
+        <div className="card-flat stack-xs" key={`${link.name}-${index}`}>
+          <p className="text-sm font-medium" style={{ color: "var(--foreground)" }}>
+            {link.name || `Link ${index + 1}`}
+          </p>
+          <p className="muted text-sm">{[link.type, link.process, link.location].filter(Boolean).join(" - ") || "Details pending"}</p>
+          <p className="text-sm">{link.purpose || "No purpose added yet."}</p>
+          <p className="muted text-xs">
+            Connections: {link.connections || "Not specified"}
+            {link.criticality ? ` | Criticality: ${link.criticality}` : ""}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default async function SetupReviewPage({
   searchParams,
 }: {
@@ -34,19 +56,19 @@ export default async function SetupReviewPage({
 
   const snapshot = session.companyId
     ? await getCompanySetupSnapshot(session.companyId)
-    : { baselayer: null, integrations: { inputContextTools: [], executionTools: [], connectors: [] }, highLevel: null };
+    : { baselayer: null, integrations: { inputContextTools: [], executionTools: [], connectors: [] }, supplyChainLinks: [], highLevel: null };
 
   return (
     <AnimeStagger className="container stack-xl" itemSelector="[data-animate-section]" delayStep={85}>
       <div data-animate-section>
-        <AppHeader title="Review setup" subtitle="Step 4 of 4" />
+        <AppHeader title="Review setup" subtitle="Step 5 of 5" />
       </div>
       {saved === "high-level" ? (
         <div data-animate-section>
           <StatusBanner
             variant="success"
             title="High-level profile saved"
-            message="Setup data is up to date. Review everything below before entering the dashboard."
+            message="Changes saved."
           />
         </div>
       ) : null}
@@ -84,9 +106,14 @@ export default async function SetupReviewPage({
               ) : null}
             </div>
           ) : (
-            <p className="muted text-sm">No tools assigned to input context or execution.</p>
+            <p className="muted text-sm">No tools assigned.</p>
           )}
         </article>
+      </section>
+
+      <section className="card stack" data-animate-section>
+        <h3>Supply chain links</h3>
+        <SupplyChainLinksList links={snapshot.supplyChainLinks} />
       </section>
 
       <section className="card stack" data-animate-section>
@@ -95,11 +122,37 @@ export default async function SetupReviewPage({
 
         <hr className="divider" />
         <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-          <Link className="btn secondary btn-sm" href="/setup/baselayer">Edit base</Link>
-          <Link className="btn secondary btn-sm" href="/setup/integrations">Edit integrations</Link>
-          <Link className="btn secondary btn-sm" href="/setup/high-level">Edit high-level</Link>
+          <Link className="btn secondary btn-sm" href="/setup/baselayer">
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              edit
+            </span>
+            Edit base
+          </Link>
+          <Link className="btn secondary btn-sm" href="/setup/integrations">
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              route
+            </span>
+            Edit integrations
+          </Link>
+          <Link className="btn secondary btn-sm" href="/setup/high-level">
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              tune
+            </span>
+            Edit high-level
+          </Link>
+          <Link className="btn secondary btn-sm" href="/setup/stakeholders">
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              account_tree
+            </span>
+            Edit supply chain links
+          </Link>
           <ConfirmSetupButton />
-          <Link className="btn secondary btn-sm" href="/dashboard">Go to dashboard</Link>
+          <Link className="btn secondary btn-sm" href="/dashboard">
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              dashboard
+            </span>
+            Go to dashboard
+          </Link>
         </div>
       </section>
     </AnimeStagger>

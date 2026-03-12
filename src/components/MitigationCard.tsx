@@ -44,6 +44,126 @@ function formatActionPayload(value: unknown): string {
   }
 }
 
+type ExecutionArtifact = {
+  format: "csv" | "excel" | "google_sheets";
+  fileName?: string;
+  mimeType?: string;
+  contentBase64?: string;
+  destination?: string;
+  preview?: string;
+};
+
+type FinancialReportFormat = "google_sheets" | "excel" | "csv";
+type FinancialReportPayloadUi = {
+  format?: FinancialReportFormat;
+  spreadsheetTitle?: string;
+  tabs?: Array<{ name?: string; section?: string }>;
+};
+
+function decodeBase64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+type DownloadResult = "picker" | "fallback" | "none";
+
+function supportsSaveFilePicker(): boolean {
+  return typeof (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker === "function";
+}
+
+async function openSaveHandleForFormat(format: FinancialReportFormat, planId: string): Promise<any | null> {
+  const picker = (window as unknown as { showSaveFilePicker?: (opts?: unknown) => Promise<any> }).showSaveFilePicker;
+  if (typeof picker !== "function") return null;
+  const ext = format === "csv" ? "csv" : "xlsx";
+  const mime = ext === "csv" ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  try {
+    return await picker({
+      suggestedName: `financial-impact-${planId}.${ext}`,
+      types: [
+        {
+          description: ext === "csv" ? "CSV file" : "Excel file",
+          accept: { [mime]: [`.${ext}`] },
+        },
+      ],
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function writeArtifactToHandle(artifact: ExecutionArtifact, handle: any): Promise<boolean> {
+  if (!artifact?.contentBase64 || !handle?.createWritable) return false;
+  try {
+    const bytes = decodeBase64ToBytes(artifact.contentBase64);
+    const arrayBuffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(arrayBuffer).set(bytes);
+    const blob = new Blob([arrayBuffer], {
+      type: artifact.mimeType || "application/octet-stream",
+    });
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function downloadArtifact(
+  artifact: ExecutionArtifact,
+  options?: { preferPicker?: boolean; allowFallback?: boolean }
+): Promise<DownloadResult> {
+  if (!artifact.contentBase64 || !artifact.fileName) return "none";
+  const bytes = decodeBase64ToBytes(artifact.contentBase64);
+  const arrayBuffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(arrayBuffer).set(bytes);
+  const blob = new Blob([arrayBuffer], {
+    type: artifact.mimeType || "application/octet-stream",
+  });
+  const preferPicker = options?.preferPicker ?? true;
+  const allowFallback = options?.allowFallback ?? true;
+  const picker = (window as unknown as { showSaveFilePicker?: (opts?: unknown) => Promise<any> }).showSaveFilePicker;
+  if (preferPicker && typeof picker === "function") {
+    try {
+      const ext = artifact.fileName.toLowerCase().endsWith(".csv") ? "csv" : "xlsx";
+      const handle = await picker({
+        suggestedName: artifact.fileName,
+        types: [
+          {
+            description: ext === "csv" ? "CSV file" : "Excel file",
+            accept: {
+              [artifact.mimeType || (ext === "csv" ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]:
+                [`.${ext}`],
+            },
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return "picker";
+    } catch {
+      if (!allowFallback) return "none";
+      // User cancelled picker or browser blocked; fallback to regular download.
+    }
+  }
+  if (!allowFallback) return "none";
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = artifact.fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  return "fallback";
+}
+
 type MitigationCardProps = {
   riskCase: any;
   archived?: boolean;
@@ -53,6 +173,105 @@ type MitigationCardProps = {
   selected?: boolean;
   onSelectedChange?: (selected: boolean) => void;
 };
+
+function defaultFinancialReportPayloadForUi(): string {
+  return JSON.stringify({
+    format: "csv",
+    tabs: [
+      { name: "Overview", section: "overview" },
+      { name: "Financial Impact", section: "financial_impact" },
+      { name: "Scenario Comparison", section: "scenario_comparison" },
+      { name: "Drivers & Assumptions", section: "drivers_assumptions" },
+      { name: "Signal Details", section: "signal_details" },
+    ],
+  });
+}
+
+function normalizeDraftedPlan(plan: any | null): any | null {
+  if (!plan || !Array.isArray(plan.actions)) return plan;
+  const actions = [...plan.actions];
+  const idx = actions.findIndex((a: any) => a?.type === "financial_report");
+  const fallbackPayload = defaultFinancialReportPayloadForUi();
+  if (idx === -1) {
+    actions.push({
+      type: "financial_report",
+      recipientOrEndpoint: "",
+      payloadOrBody: fallbackPayload,
+      requiresHumanApproval: false,
+      stepTitle: "Draft detailed financial impact export",
+    });
+    return { ...plan, actions };
+  }
+  const current = actions[idx] ?? {};
+  let payload = typeof current.payloadOrBody === "string" ? current.payloadOrBody : "";
+  try {
+    const parsed = JSON.parse(payload || "{}") as { format?: unknown; tabs?: unknown[] };
+    const hasFormat = typeof parsed.format === "string" && parsed.format.length > 0;
+    const hasTabs = Array.isArray(parsed.tabs) && parsed.tabs.length > 0;
+    if (!hasFormat || !hasTabs) payload = fallbackPayload;
+  } catch {
+    payload = fallbackPayload;
+  }
+  actions[idx] = {
+    ...current,
+    recipientOrEndpoint: current.recipientOrEndpoint ?? "",
+    payloadOrBody: payload,
+    stepTitle: current.stepTitle || "Draft detailed financial impact export",
+  };
+  return { ...plan, actions };
+}
+
+function parseFinancialPayloadForUi(raw: unknown): FinancialReportPayloadUi {
+  if (typeof raw !== "string" || !raw.trim()) return { format: "csv" };
+  try {
+    const parsed = JSON.parse(raw) as FinancialReportPayloadUi;
+    return {
+      format:
+        parsed?.format === "google_sheets" || parsed?.format === "excel" || parsed?.format === "csv"
+          ? parsed.format
+          : "csv",
+      spreadsheetTitle: typeof parsed?.spreadsheetTitle === "string" ? parsed.spreadsheetTitle : "",
+      tabs: Array.isArray(parsed?.tabs) ? parsed.tabs : undefined,
+    };
+  } catch {
+    return { format: "csv" };
+  }
+}
+
+function toFinancialPayloadString(input: FinancialReportPayloadUi): string {
+  const tabs =
+    Array.isArray(input.tabs) && input.tabs.length > 0
+      ? input.tabs
+      : [
+          { name: "Overview", section: "overview" },
+          { name: "Financial Impact", section: "financial_impact" },
+          { name: "Scenario Comparison", section: "scenario_comparison" },
+          { name: "Drivers & Assumptions", section: "drivers_assumptions" },
+          { name: "Signal Details", section: "signal_details" },
+        ];
+  return JSON.stringify(
+    {
+      format: input.format ?? "csv",
+      ...(input.spreadsheetTitle?.trim() ? { spreadsheetTitle: input.spreadsheetTitle.trim() } : {}),
+      tabs,
+    },
+    null,
+    2
+  );
+}
+
+function getFinancialReportActionIndex(actions: any[]): number {
+  return actions.findIndex((a) => a?.type === "financial_report");
+}
+
+function getFinancialFormatFromAction(action: any): FinancialReportFormat {
+  const parsed = parseFinancialPayloadForUi(formatActionPayload(action?.payloadOrBody));
+  return parsed.format ?? "csv";
+}
+
+function artifactStorageKey(planId: string): string {
+  return `htf-mitigation-artifacts:${planId}`;
+}
 
 export function MitigationCard({
   riskCase: rc,
@@ -66,7 +285,7 @@ export function MitigationCard({
   const [archivedExpanded, setArchivedExpanded] = useState(false);
   const [activeExpanded, setActiveExpanded] = useState(defaultExpanded);
   const [loadingId, setLoadingId] = useState<string | null>(null);
-  const [draftedPlan, setDraftedPlan] = useState<any | null>(rc.mitigationPlans?.[0] || null);
+  const [draftedPlan, setDraftedPlan] = useState<any | null>(normalizeDraftedPlan(rc.mitigationPlans?.[0] || null));
   const [isExecuting, setIsExecuting] = useState(false);
   const [deletingDraft, setDeletingDraft] = useState(false);
   const [deletingCase, setDeletingCase] = useState(false);
@@ -77,6 +296,9 @@ export function MitigationCard({
   const [savingEdit, setSavingEdit] = useState(false);
   const [confirmDeleteCaseOpen, setConfirmDeleteCaseOpen] = useState(false);
   const [confirmDeleteDraftOpen, setConfirmDeleteDraftOpen] = useState(false);
+  const [executionArtifacts, setExecutionArtifacts] = useState<ExecutionArtifact[]>([]);
+  const [sheetsEnabled, setSheetsEnabled] = useState(false);
+  const [financialReportFormat, setFinancialReportFormat] = useState<FinancialReportFormat>("csv");
 
   const actions = Array.isArray(draftedPlan?.actions) ? draftedPlan.actions : [];
 
@@ -93,6 +315,50 @@ export function MitigationCard({
     }
   }, [draftedPlan?.id, actions.length]);
 
+  useEffect(() => {
+    const planId = draftedPlan?.id;
+    if (!planId || typeof window === "undefined") return;
+    try {
+      const raw = window.sessionStorage.getItem(artifactStorageKey(planId));
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as ExecutionArtifact[];
+      if (Array.isArray(parsed)) setExecutionArtifacts(parsed);
+    } catch {
+      // ignore storage parse errors
+    }
+  }, [draftedPlan?.id]);
+
+  useEffect(() => {
+    const idx = getFinancialReportActionIndex(actions);
+    if (idx < 0) {
+      setFinancialReportFormat("csv");
+      return;
+    }
+    setFinancialReportFormat(getFinancialFormatFromAction(actions[idx]));
+  }, [draftedPlan?.id, draftedPlan?.actions, actions.length]);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/zapier/tool-selections")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!active) return;
+        const tools = Array.isArray(data?.executionTools) ? (data.executionTools as string[]) : [];
+        const hasSheets = tools.some((name) => {
+          const n = String(name || "").toLowerCase();
+          return n.includes("sheet") || n.includes("google sheets");
+        });
+        setSheetsEnabled(hasSheets);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSheetsEnabled(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const handleExecute = async (scenarioId: string) => {
     try {
       setLoadingId(scenarioId);
@@ -103,8 +369,10 @@ export function MitigationCard({
       });
       const data = await res.json();
       if (data.success) {
-        setDraftedPlan(data.plan);
-        setSelectedActionIndices(new Set((data.plan?.actions ?? []).map((_: unknown, i: number) => i)));
+        const normalizedPlan = normalizeDraftedPlan(data.plan);
+        setDraftedPlan(normalizedPlan);
+        setSelectedActionIndices(new Set((normalizedPlan?.actions ?? []).map((_: unknown, i: number) => i)));
+        setExecutionArtifacts([]);
       } else alert(data.error);
     } catch { alert("Failed to draft plan"); } finally { setLoadingId(null); }
   };
@@ -114,8 +382,19 @@ export function MitigationCard({
     const indices = selectedActionIndices.size > 0
       ? Array.from(selectedActionIndices)
       : actions.map((_: unknown, i: number) => i);
+    const financialIdx = getFinancialReportActionIndex(actions);
+    if (financialIdx >= 0 && !indices.includes(financialIdx)) {
+      indices.push(financialIdx);
+    }
     try {
       setIsExecuting(true);
+      const preselectedSaveHandle =
+        financialIdx >= 0 &&
+        indices.includes(financialIdx) &&
+        (financialReportFormat === "csv" || financialReportFormat === "excel") &&
+        supportsSaveFilePicker()
+          ? await openSaveHandleForFormat(financialReportFormat, draftedPlan.id)
+          : null;
       const res = await fetch("/api/agents/mitigation-action/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -127,7 +406,25 @@ export function MitigationCard({
       });
       const data = await res.json().catch(() => ({}));
       if (data.success) {
+        const artifacts: ExecutionArtifact[] = Array.isArray(data.executionResults?.artifacts)
+          ? data.executionResults.artifacts
+          : [];
+        setExecutionArtifacts(artifacts);
+        if (draftedPlan?.id && typeof window !== "undefined") {
+          try {
+            window.sessionStorage.setItem(artifactStorageKey(draftedPlan.id), JSON.stringify(artifacts));
+          } catch {
+            // ignore storage failures
+          }
+        }
         const hadFailures = data.executionResults?.failed?.length > 0;
+        const downloadable = artifacts.filter((a) => !!a.contentBase64 && !!a.fileName);
+        if (downloadable.length > 0) {
+          if (preselectedSaveHandle) {
+            const preferred = downloadable.find((a) => a.format === financialReportFormat) ?? downloadable[0];
+            if (preferred) await writeArtifactToHandle(preferred, preselectedSaveHandle);
+          }
+        }
         if (!hadFailures) {
           setDraftedPlan({ ...draftedPlan, status: "EXECUTED" });
           router.refresh();
@@ -154,8 +451,16 @@ export function MitigationCard({
       const res = await fetch(`/api/mitigation-plans/${draftedPlan.id}`, { method: "DELETE" });
       if (res.ok) {
         setConfirmDeleteDraftOpen(false);
+        if (draftedPlan?.id && typeof window !== "undefined") {
+          try {
+            window.sessionStorage.removeItem(artifactStorageKey(draftedPlan.id));
+          } catch {
+            // ignore storage failures
+          }
+        }
         setDraftedPlan(null);
         setSelectedActionIndices(new Set());
+        setExecutionArtifacts([]);
         router.refresh();
       } else {
         const data = await res.json().catch(() => ({}));
@@ -183,8 +488,17 @@ export function MitigationCard({
       });
       const data = await res.json();
       if (data.success) {
-        setDraftedPlan(data.plan);
-        setSelectedActionIndices(new Set((data.plan?.actions ?? []).map((_: unknown, i: number) => i)));
+        if (draftedPlan?.id && typeof window !== "undefined") {
+          try {
+            window.sessionStorage.removeItem(artifactStorageKey(draftedPlan.id));
+          } catch {
+            // ignore storage failures
+          }
+        }
+        const normalizedPlan = normalizeDraftedPlan(data.plan);
+        setDraftedPlan(normalizedPlan);
+        setSelectedActionIndices(new Set((normalizedPlan?.actions ?? []).map((_: unknown, i: number) => i)));
+        setExecutionArtifacts([]);
         router.refresh();
       } else alert(data.error || "Failed to redraft");
     } catch { alert("Failed to redraft"); } finally { setLoadingId(null); }
@@ -227,11 +541,15 @@ export function MitigationCard({
   const startEdit = (idx: number) => {
     const action = actions[idx];
     if (!action) return;
+    const isFinancialReport = action.type === "financial_report";
+    const normalizedPayload = isFinancialReport
+      ? toFinancialPayloadString(parseFinancialPayloadForUi(formatActionPayload(action.payloadOrBody)))
+      : formatActionPayload(action.payloadOrBody);
     setEditingIdx(idx);
     setEditForm({
       stepTitle: action.stepTitle ?? "",
       recipientOrEndpoint: action.recipientOrEndpoint ?? "",
-      payloadOrBody: formatActionPayload(action.payloadOrBody),
+      payloadOrBody: normalizedPayload,
     });
   };
 
@@ -287,6 +605,86 @@ export function MitigationCard({
     } catch { alert("Failed to save draft"); } finally { setSavingEdit(false); }
   };
 
+  const updateFinancialReportFormat = (nextFormat: FinancialReportFormat) => {
+    const idx = getFinancialReportActionIndex(actions);
+    if (idx < 0 || !draftedPlan) return;
+    const target = actions[idx];
+    const current = parseFinancialPayloadForUi(formatActionPayload(target.payloadOrBody));
+    const nextPayload = toFinancialPayloadString({
+      ...current,
+      format: nextFormat,
+      spreadsheetTitle:
+        nextFormat === "google_sheets"
+          ? (current.spreadsheetTitle || `Financial impact - ${rc.triggerType ?? "Risk"}`)
+          : current.spreadsheetTitle,
+    });
+    const updatedActions = [...actions];
+    updatedActions[idx] = {
+      ...target,
+      payloadOrBody: nextPayload,
+      stepTitle: target?.stepTitle || "Draft detailed financial impact export",
+    };
+    setDraftedPlan({ ...draftedPlan, actions: updatedActions });
+    setFinancialReportFormat(nextFormat);
+  };
+
+  const runFinancialExportOnly = async () => {
+    if (!draftedPlan?.id) return;
+    const idx = getFinancialReportActionIndex(actions);
+    if (idx < 0) {
+      alert("No financial report step found in this plan.");
+      return;
+    }
+    try {
+      setIsExecuting(true);
+      const financialAction = actions[idx];
+      if (!financialAction) {
+        alert("No financial report step found in this plan.");
+        return;
+      }
+      const preselectedSaveHandle =
+        (financialReportFormat === "csv" || financialReportFormat === "excel") && supportsSaveFilePicker()
+          ? await openSaveHandleForFormat(financialReportFormat, draftedPlan.id)
+          : null;
+      const res = await fetch("/api/agents/mitigation-action/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planId: draftedPlan.id,
+          actionIndices: [0],
+          // Strict file-only execution path: Gemini generates document content,
+          // and no other plan actions are executed.
+          actions: [financialAction],
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!data.success) {
+        alert(data.error || "Failed to generate financial export.");
+        return;
+      }
+      const artifacts: ExecutionArtifact[] = Array.isArray(data.executionResults?.artifacts)
+        ? data.executionResults.artifacts
+        : [];
+      setExecutionArtifacts(artifacts);
+      if (draftedPlan?.id && typeof window !== "undefined") {
+        try {
+          window.sessionStorage.setItem(artifactStorageKey(draftedPlan.id), JSON.stringify(artifacts));
+        } catch {
+          // ignore storage failures
+        }
+      }
+      const downloadable = artifacts.filter((a) => !!a.contentBase64 && !!a.fileName);
+      if (downloadable.length > 0 && preselectedSaveHandle) {
+        await writeArtifactToHandle(downloadable[0], preselectedSaveHandle);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to generate financial export.";
+      alert(msg);
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
   const isExecuted = draftedPlan?.status === "EXECUTED";
   const isExpanded = archived ? archivedExpanded : activeExpanded;
   /** Current case with a draft plan waiting for user to Approve & Fire — show warning so user knows confirmation is needed */
@@ -322,7 +720,7 @@ export function MitigationCard({
         onCancel={() => setConfirmDeleteDraftOpen(false)}
       />
       <section
-        className="card stack-lg"
+        className={`card stack-lg mitigation-card${selected ? " is-selected" : ""}`}
         data-animate-item
         style={{
           opacity: isExecuted ? 0.75 : 1,
@@ -670,6 +1068,96 @@ export function MitigationCard({
           <p className="text-sm muted" style={{ margin: 0 }}>
             {!isExecuted ? "Insights and recommendations are suggestions only. Select which executable steps to run (email, Zapier, etc.), then Approve & Fire." : "Actions that were executed."}
           </p>
+
+          {!isExecuted && getFinancialReportActionIndex(actions) >= 0 && (
+            <div className="card-flat stack-xs" style={{ padding: "0.75rem 1rem" }}>
+              <p className="text-xs uppercase muted" style={{ margin: 0 }}>Financial report output</p>
+              <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+                <select
+                  className="input"
+                  style={{ maxWidth: 320 }}
+                  value={financialReportFormat}
+                  onChange={(e) => updateFinancialReportFormat(e.target.value as FinancialReportFormat)}
+                >
+                  {sheetsEnabled ? (
+                    <option value="google_sheets">Create new Google Sheet</option>
+                  ) : (
+                    <option value="google_sheets" disabled>Create new Google Sheet (enable Sheets in Integrations)</option>
+                  )}
+                  <option value="excel">Download Excel (.xlsx)</option>
+                  <option value="csv">Download CSV (.csv)</option>
+                </select>
+                <span className="text-xs muted">Set this before Approve & Fire.</span>
+                <button type="button" className="btn secondary btn-sm" onClick={runFinancialExportOnly} disabled={isExecuting}>
+                  {isExecuting ? "Generating…" : "Generate export only"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isExecuted && getFinancialReportActionIndex(actions) >= 0 && (
+            <div className="card-flat stack-xs" style={{ padding: "0.75rem 1rem" }}>
+              <p className="text-xs uppercase muted" style={{ margin: 0 }}>Financial report output</p>
+              <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+                <select
+                  className="input"
+                  style={{ maxWidth: 320 }}
+                  value={financialReportFormat}
+                  onChange={(e) => updateFinancialReportFormat(e.target.value as FinancialReportFormat)}
+                  disabled={isExecuting}
+                >
+                  {sheetsEnabled ? (
+                    <option value="google_sheets">Create new Google Sheet</option>
+                  ) : (
+                    <option value="google_sheets" disabled>Create new Google Sheet (enable Sheets in Integrations)</option>
+                  )}
+                  <option value="excel">Download Excel (.xlsx)</option>
+                  <option value="csv">Download CSV (.csv)</option>
+                </select>
+                <button type="button" className="btn secondary btn-sm" onClick={runFinancialExportOnly} disabled={isExecuting}>
+                  {isExecuting ? "Generating…" : "Generate export now"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {executionArtifacts.length > 0 && (
+            <div className="card-flat stack-xs" style={{ padding: "0.75rem 1rem" }}>
+              <p className="text-xs uppercase muted" style={{ margin: 0 }}>Generated outputs</p>
+              <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
+                {executionArtifacts.filter((a) => a.contentBase64 && a.fileName).map((artifact, idx) => (
+                  <div key={`${artifact.fileName ?? "artifact"}-${idx}`} className="row" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="btn secondary btn-sm"
+                      onClick={async () => {
+                        const result = await downloadArtifact(artifact, { preferPicker: true, allowFallback: false });
+                        if (result !== "picker") {
+                          alert("Save As popup is not available in this browser context. Use Chrome/Edge on localhost/https, then click Save As… again.");
+                        }
+                      }}
+                    >
+                      Save As… {artifact.fileName ?? `${artifact.format} export`}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn secondary btn-sm"
+                      onClick={() => void downloadArtifact(artifact, { preferPicker: false, allowFallback: true })}
+                    >
+                      Quick download
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {executionArtifacts
+                .filter((a) => a.format === "google_sheets")
+                .map((artifact, idx) => (
+                  <p key={`sheet-${idx}`} className="text-xs muted" style={{ margin: 0 }}>
+                    {artifact.preview || "Google Sheets export completed."}
+                  </p>
+                ))}
+            </div>
+          )}
 
           <AnimeStagger
             className="stack-sm"

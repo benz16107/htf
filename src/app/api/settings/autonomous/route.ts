@@ -18,7 +18,7 @@ const DEFAULTS = {
   requireApprovalForProbabilityAbove: null as number | null,
   maxAutoExecutionsPerDay: 5,
   /** Include all action types the mitigation agent can produce so plans are not skipped for "disallowed" type */
-  allowedActionTypesToAutoExecute: ["zapier_mcp", "email", "notification", "zapier_action", "erp_update"] as string[],
+  allowedActionTypesToAutoExecute: ["zapier_mcp", "email", "notification", "zapier_action", "erp_update", "financial_report"] as string[],
   requireApprovalForFirstNPerDay: 0,
 };
 

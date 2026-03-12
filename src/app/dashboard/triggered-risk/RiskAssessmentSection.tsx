@@ -47,17 +47,17 @@ export function RiskAssessmentSection({
           .join("\n");
   const manualList =
     manualSignals.length === 0
-      ? "No manual scenarios in this assessment."
+      ? "No manual signals in this assessment."
       : manualSignals
           .map((s, i) => {
             const p = s.manualPayload;
-            return p ? `[${i + 1}] (Manual) ${p.scenario}` : `[${i + 1}] ${s.summary}`;
+            return p ? `[${i + 1}] (Manual signal) ${p.scenario}` : `[${i + 1}] ${s.summary}`;
           })
           .join("\n");
 
   const handleRunAssessment = async () => {
     if (selectedSignals.length === 0) {
-      alert("Add at least one signal (external, internal, or manual case) above, then run assessment.");
+      alert("Add at least one signal (external, internal, or manual signal) above, then run assessment.");
       return;
     }
     setLoading(true);
@@ -139,11 +139,10 @@ export function RiskAssessmentSection({
   return (
     <section className="card stack">
       <h3>Risk assessment</h3>
-      <p className="muted text-sm">Add signals above, then run assessment. Results appear in Assessment outputs.</p>
       {selectedSignals.length > 0 ? (
         <div className="card-flat stack-sm pad-sm">
           <span className="text-sm font-medium">Signals in this assessment ({selectedSignals.length})</span>
-          <ul className="stack-xs list-reset scroll-12">
+          <ul className="stack-xs list-reset scroll-assessment-signals">
             {selectedSignals.map((s) => (
               <li key={s.id} className="row between gap-xs">
                 <span className="text-sm min-w-0" title={s.summary}>
@@ -156,6 +155,9 @@ export function RiskAssessmentSection({
                   onClick={() => onRemoveSignal(s.id)}
                   aria-label="Remove from assessment"
                 >
+                  <span className="material-symbols-rounded btn__icon" aria-hidden>
+                    delete
+                  </span>
                   Remove
                 </button>
               </li>
@@ -163,11 +165,11 @@ export function RiskAssessmentSection({
           </ul>
         </div>
       ) : (
-        <p className="muted text-sm">No signals yet. Add from External/Internal signal or Manual case above.</p>
+        <p className="muted text-sm">No signals selected.</p>
       )}
       {loading && (
         <p className="text-sm text-amber-600 dark:text-amber-400">
-          Assessing… This may take 1–2 minutes. Please stay on this page.
+          Assessing...
         </p>
       )}
       {errorMessage && (
@@ -181,6 +183,9 @@ export function RiskAssessmentSection({
         onClick={handleRunAssessment}
         disabled={loading || selectedSignals.length === 0}
       >
+        <span className={`material-symbols-rounded btn__icon ${loading ? "animate-spin" : ""}`} aria-hidden>
+          {loading ? "progress_activity" : "analytics"}
+        </span>
         {loading ? "Assessing…" : "Run risk assessment"}
       </button>
     </section>

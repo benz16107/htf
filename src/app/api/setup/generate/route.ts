@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-import { z } from "zod";
+import { getSession } from "@/lib/auth";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 
 const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY || "",
@@ -8,6 +9,7 @@ const ai = new GoogleGenAI({
 
 export async function POST(request: Request) {
     try {
+        const session = await getSession();
         const body = await request.json();
         const { companyName, manualInput } = body;
 
@@ -33,8 +35,9 @@ export async function POST(request: Request) {
     Provide your response in JSON format exactly matching these keys: "sector" (string), "companyType" (string), "sizeBand" (string), "industryStance" (string), "supplyChainSummary" (string).
     `;
 
+        const model = await getGeminiModelForCompany(session?.companyId);
         const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model,
             contents: promptText,
             config: {
                 responseMimeType: "application/json",
@@ -45,8 +48,8 @@ export async function POST(request: Request) {
         const object = JSON.parse(response.text);
 
         return NextResponse.json(object);
-    } catch (error: any) {
-        console.error("AI Setup Error:", error?.message || error);
+    } catch (error: unknown) {
+        console.error("AI Setup Error:", error instanceof Error ? error.message : error);
         return NextResponse.json(
             { error: "Failed to run AI Setup Agent" },
             { status: 500 }

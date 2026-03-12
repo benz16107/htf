@@ -3,6 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { isNonRiskNotification } from "@/lib/signal-filters";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 import { triggerAutonomousRunForEvents } from "@/server/risk/live-internal-signals";
 import {
   fetchGmailMessagesSinceHistory,
@@ -38,7 +39,8 @@ function contentForRiskCheck(summary: string, raw?: unknown): string {
 }
 
 async function classifyRiskRelevance(
-  items: { summary: string; raw?: unknown }[]
+  items: { summary: string; raw?: unknown }[],
+  model: string,
 ): Promise<boolean[]> {
   if (items.length === 0) return [];
   if (!process.env.GEMINI_API_KEY) return items.map(() => false);
@@ -48,7 +50,7 @@ async function classifyRiskRelevance(
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model,
       contents: prompt,
       config: { responseMimeType: "application/json" },
     });
@@ -103,6 +105,7 @@ export async function POST(request: Request) {
   if (!companyId) {
     return NextResponse.json({ ok: true, skipped: true, reason: "no_company_for_email" });
   }
+  const model = await getGeminiModelForCompany(companyId);
 
   let messages = await fetchGmailMessagesSinceHistory(companyId, historyId);
   if (messages.length === 0) {
@@ -120,7 +123,8 @@ export async function POST(request: Request) {
     .map((message, index) => ({ message, index }))
     .filter(({ index }) => !obviousNonRiskFlags[index]);
   const classifiedFlags = await classifyRiskRelevance(
-    toClassify.map(({ message }) => ({ summary: message.summary, raw: message.raw }))
+    toClassify.map(({ message }) => ({ summary: message.summary, raw: message.raw })),
+    model,
   );
   const relevantFlags = candidates.map((_, index) => {
     if (obviousNonRiskFlags[index]) return false;

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getRequestOrigin } from "@/lib/request-origin";
 import { isNonRiskNotification } from "@/lib/signal-filters";
 import { runSignalRiskAgent } from "@/server/agents/signal-agent";
 import { createRiskCaseFromAssessment } from "@/server/risk/create-from-assessment";
@@ -22,6 +23,11 @@ function normalizeSignalSources(value: string | null | undefined): "internal_onl
   if (v === "internal_only" || v === "internal") return "internal_only";
   if (v === "external_only" || v === "external") return "external_only";
   return "both";
+}
+
+function normalizeInternalMode(value: string | null | undefined): "live" | "lookback" {
+  const v = (value ?? "").toLowerCase().trim().replace(/\s+/g, "_");
+  return v === "live" ? "live" : "lookback";
 }
 
 function getInternalRunSecret(): string | null {
@@ -122,6 +128,25 @@ async function logPlanExecutionDeferred(
   await logAutonomous(companyId, runId, "plan_execution_deferred", opts);
 }
 
+async function tryClaimJob(
+  job: { type: "internal" | "external"; id: string },
+  companyId: string
+): Promise<boolean> {
+  const claimedAt = new Date();
+  if (job.type === "internal") {
+    const result = await db.ingestedEvent.updateMany({
+      where: { id: job.id, companyId, autonomousProcessedAt: null },
+      data: { autonomousProcessedAt: claimedAt },
+    });
+    return result.count > 0;
+  }
+  const result = await db.savedExternalSignal.updateMany({
+    where: { id: job.id, companyId, autonomousProcessedAt: null },
+    data: { autonomousProcessedAt: claimedAt },
+  });
+  return result.count > 0;
+}
+
 function minutesAgo(minutes: number): Date {
   return new Date(Date.now() - minutes * 60 * 1000);
 }
@@ -203,6 +228,18 @@ export async function POST(req: Request) {
       });
     }
 
+    // Master safety switch: autonomous processing must not run when agentRunning is off.
+    if (!config?.agentRunning) {
+      console.log("[autonomous] Run skipped: agentRunning is off");
+      return NextResponse.json({
+        success: true,
+        message: "Autonomous agent is off.",
+        processed: 0,
+        created: 0,
+        executed: 0,
+      });
+    }
+
     if (automationLevel === "off") {
       console.log("[autonomous] Run skipped: automationLevel is off");
       return NextResponse.json({
@@ -215,6 +252,7 @@ export async function POST(req: Request) {
     }
 
     const signalSources = normalizeSignalSources(config?.signalSources);
+    const internalSignalMode = normalizeInternalMode((config as { internalSignalMode?: string } | null)?.internalSignalMode);
     const rawInternalLookback = config?.internalSignalLookbackMinutes ?? DEFAULT_LOOKBACK_MINUTES;
     const internalLookbackMinutes = Math.max(
       MIN_INTERNAL_LOOKBACK_MINUTES,
@@ -239,7 +277,7 @@ export async function POST(req: Request) {
     const allowedActionTypes = new Set(
       (configuredAllowedActionTypes && configuredAllowedActionTypes.length > 0)
         ? configuredAllowedActionTypes
-        : ["zapier_mcp", "email", "notification", "zapier_action", "erp_update"]
+        : ["zapier_mcp", "email", "notification", "zapier_action", "erp_update", "financial_report"]
     );
     // Compatibility bridge for older configs: zapier_action and zapier_mcp are interchangeable execution paths.
     if (allowedActionTypes.has("zapier_mcp")) allowedActionTypes.add("zapier_action");
@@ -281,6 +319,49 @@ export async function POST(req: Request) {
     const liveEventIds = Array.isArray(bodyEventIds) && bodyEventIds.length > 0
       ? bodyEventIds.filter((id): id is string => typeof id === "string")
       : null;
+
+    // Pull fresh internal signals before selecting jobs when this run is not already tied to
+    // explicit live event ids. This keeps the continuous UI run loop aligned with "Sync now".
+    if (!liveEventIds && (signalSources === "internal_only" || signalSources === "both")) {
+      try {
+        const origin = getRequestOrigin(req);
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        const cronHeader = req.headers.get("x-cron-secret");
+        const internalHeader = req.headers.get("x-internal-secret");
+        if (cronHeader) headers["x-cron-secret"] = cronHeader;
+        if (internalHeader) headers["x-internal-secret"] = internalHeader;
+        const cookieHeader = req.headers.get("cookie");
+        if (cookieHeader) headers.Cookie = cookieHeader;
+
+        const ingestBody: Record<string, unknown> = {
+          suppressAutonomousTrigger: true,
+        };
+        if (isCronTrigger || isInternalTrigger) ingestBody.companyId = companyId;
+        if (internalSignalMode === "lookback") {
+          ingestBody.receivedAfter = new Date(Date.now() - internalLookbackMinutes * 60 * 1000).toISOString();
+        }
+
+        const ingestRes = await fetch(`${origin}/api/risk/ingest`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(ingestBody),
+          cache: "no-store",
+        });
+        if (!ingestRes.ok) {
+          const text = await ingestRes.text().catch(() => "");
+          console.warn(
+            "[autonomous] Internal ingest prefetch failed company=%s status=%d body=%s",
+            companyId,
+            ingestRes.status,
+            text.slice(0, 200)
+          );
+        }
+      } catch (ingestErr) {
+        console.warn("[autonomous] Internal ingest prefetch error:", ingestErr);
+      }
+    }
 
     if (bodyRunId) {
       const existingRunStart = await db.autonomousAgentLog.findFirst({
@@ -504,6 +585,12 @@ export async function POST(req: Request) {
 
     for (const job of jobs) {
       try {
+        const claimed = await tryClaimJob(job, companyId);
+        if (!claimed) {
+          // Another overlapping run already claimed/processed this signal.
+          continue;
+        }
+
         const triggerText = [job.triggerType, job.entityMap?.signal, job.entityMap?.title, job.entityMap?.snippet]
           .filter(Boolean)
           .join(" ");

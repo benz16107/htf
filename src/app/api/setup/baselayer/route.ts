@@ -4,7 +4,7 @@ import { getSession } from "@/lib/auth";
 import { getRequestOrigin } from "@/lib/request-origin";
 import { runSetupAgent } from "@/server/agents/setup-agent";
 
-export async function GET(request: Request) {
+export async function GET() {
   const session = await getSession();
   if (!session?.companyId) {
     return NextResponse.json({});
@@ -79,6 +79,7 @@ export async function POST(request: Request) {
   });
 
   const setupResult = await runSetupAgent({
+    companyId,
     companyName: payload.companyName,
     sector: payload.sector,
     companyType: payload.companyType,

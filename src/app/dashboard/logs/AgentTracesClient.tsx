@@ -124,6 +124,63 @@ function toDisplayText(value: unknown, fallback = "—"): string {
   return text.length > 0 ? text : fallback;
 }
 
+function pickString(obj: unknown, keys: string[]): string | null {
+  if (!obj || typeof obj !== "object") return null;
+  const o = obj as Record<string, unknown>;
+  for (const key of keys) {
+    const value = o[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function pickObject(obj: unknown, key: string): Record<string, unknown> | null {
+  if (!obj || typeof obj !== "object") return null;
+  const value = (obj as Record<string, unknown>)[key];
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  return null;
+}
+
+function truncateText(value: string | null | undefined, max: number): string {
+  const text = (value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max).trim()}…` : text;
+}
+
+function parseSubjectFromSummary(summary: string | null | undefined): string | null {
+  const s = (summary ?? "").trim();
+  const match = s.match(/Email:\s*"([^"]+)"/i);
+  return match?.[1]?.trim() ?? null;
+}
+
+function cleanEmailMessageText(text: string | null | undefined): string {
+  if (!text) return "";
+  return text
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function internalSignalSubjectAndPreview(signal: SignalExpanded): { subject: string; preview: string } {
+  const raw = signal.rawContent && typeof signal.rawContent === "object" ? (signal.rawContent as Record<string, unknown>) : null;
+  const payload = raw ? pickObject(raw, "payload") : null;
+  const subject =
+    pickString(raw, ["subject", "title"]) ??
+    parseSubjectFromSummary(signal.signalSummary) ??
+    "Internal signal";
+  const message =
+    pickString(raw, ["body", "body_plain", "bodyPlain", "textBody", "plainText", "message", "text", "content"]) ??
+    pickString(payload, ["body", "body_plain", "bodyPlain", "textBody", "plainText", "message", "text", "content"]) ??
+    pickString(raw, ["snippet", "preview"]) ??
+    pickString(payload, ["snippet", "preview"]);
+  return {
+    subject: truncateText(subject, 120) || "Internal signal",
+    preview: truncateText(cleanEmailMessageText(message), 220) || "(No email message captured)",
+  };
+}
+
 function getActionLabel(action: Record<string, unknown>, index: number): string {
   const stepTitle = action.stepTitle;
   if (typeof stepTitle === "string" && stepTitle.trim()) return stepTitle.trim();
@@ -171,8 +228,16 @@ function collectSignals(entries: LogEntry[]): {
   }
 
   return {
-    internal: [...internal.values()],
-    external: [...external.values()],
+    internal: [...internal.values()].sort((a, b) => {
+      const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
+      const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
+      return tb - ta;
+    }),
+    external: [...external.values()].sort((a, b) => {
+      const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
+      const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
+      return tb - ta;
+    }),
   };
 }
 
@@ -185,6 +250,22 @@ function latestSignalTimestampMs(entries: LogEntry[]): number {
     if (Number.isFinite(candidate) && candidate > latest) latest = candidate;
   }
   return latest;
+}
+
+function caseOpenedTimestampMs(entries: LogEntry[]): number {
+  const fromRiskCase = entries
+    .map((entry) => entry.riskCase?.createdAt)
+    .find((value): value is string => typeof value === "string" && value.length > 0);
+  if (fromRiskCase) {
+    const parsed = Date.parse(fromRiskCase);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  const createdEntry = entries.find((entry) => entry.actionType === "risk_case_created");
+  if (createdEntry?.createdAt) {
+    const parsed = Date.parse(createdEntry.createdAt);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return latestSignalTimestampMs(entries);
 }
 
 export function AgentTracesClient() {
@@ -355,13 +436,12 @@ export function AgentTracesClient() {
               .flatMap((run) => run.entries)
               .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
             const runsToShow = mergedEntries.length > 0 ? [{ runId: "combined", entries: mergedEntries }] : [];
-            const sourceRunCount = new Set(runLogs.map((run) => run.runId)).size;
             return runsToShow.map(({ runId, entries }) => {
             const { runLevel, caseGroups } = groupEntriesByCase(entries);
             const { internal: internalSignals, external: externalSignals } = collectSignals(entries);
             const caseGroupsWithCase = [...caseGroups.entries()]
               .filter(([, caseEntries]) => caseEntries.some((e) => e.riskCase))
-              .sort((a, b) => latestSignalTimestampMs(b[1]) - latestSignalTimestampMs(a[1]));
+              .sort((a, b) => caseOpenedTimestampMs(b[1]) - caseOpenedTimestampMs(a[1]));
             const runLevelFiltered = runLevel.filter(
               (log) =>
                 log.actionType !== "run_started" &&
@@ -377,7 +457,6 @@ export function AgentTracesClient() {
                   <div className="collapsible-card__title">
                     <h3 style={{ margin: 0 }}>Cases</h3>
                     <span className="badge accent">{caseGroupsWithCase.length} risk case(s)</span>
-                    <span className="muted text-xs">Merged from {sourceRunCount} run(s)</span>
                     {startedAt ? (
                       <span className="muted text-xs">
                         Started {new Date(startedAt).toLocaleString()}
@@ -426,46 +505,53 @@ export function AgentTracesClient() {
                         }}
                       >
                         {externalSignals.length > 0 && (
-                          <div className="card-flat stack-sm" style={{ padding: "0.9rem 1rem" }}>
+                          <div className="stack-xs">
                             <div className="row between gap-xs" style={{ alignItems: "center", flexWrap: "wrap" }}>
                               <h4 className="text-sm font-semibold" style={{ margin: 0 }}>External signals</h4>
                               <span className="badge">{externalSignals.length}</span>
                             </div>
-                            <div className="stack-xs">
-                              {externalSignals.slice(0, 4).map((signal, index) => (
-                                <div key={`${signal.type}-${index}`} className="stack-2xs">
-                                  <p className="text-sm" style={{ margin: 0 }}>
-                                    {signal.title?.trim() || "External signal"}
-                                  </p>
-                                  <p className="text-xs muted" style={{ margin: 0 }}>
-                                    {signal.source || "External source"}
-                                  </p>
-                                  {signal.createdAt && (
-                                    <p className="text-xs muted" style={{ margin: 0 }}>
-                                      Received: {formatTimestamp(signal.createdAt)}
-                                    </p>
-                                  )}
-                                </div>
-                              ))}
-                              {externalSignals.length > 4 && (
-                                <p className="text-xs muted" style={{ margin: 0 }}>
-                                  +{externalSignals.length - 4} more external signal(s)
+                            {externalSignals.slice(0, 4).map((signal, index) => (
+                              <div key={`${signal.type}-${index}`} className="card-flat stack-2xs" style={{ padding: "0.75rem 0.9rem" }}>
+                                <p className="text-sm" style={{ margin: 0 }}>
+                                  {signal.title?.trim() || "External signal"}
                                 </p>
-                              )}
-                            </div>
+                                {signal.snippet && (
+                                  <p className="text-xs muted" style={{ margin: 0 }}>
+                                    {signal.snippet}
+                                  </p>
+                                )}
+                                <p className="text-xs muted" style={{ margin: 0 }}>
+                                  {signal.source || "External source"}
+                                </p>
+                                {signal.createdAt && (
+                                  <p className="text-xs muted" style={{ margin: 0 }}>
+                                    Received: {formatTimestamp(signal.createdAt)}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                            {externalSignals.length > 4 && (
+                              <p className="text-xs muted" style={{ margin: 0 }}>
+                                +{externalSignals.length - 4} more external signal(s)
+                              </p>
+                            )}
                           </div>
                         )}
                         {internalSignals.length > 0 && (
-                          <div className="card-flat stack-sm" style={{ padding: "0.9rem 1rem" }}>
+                          <div className="stack-xs">
                             <div className="row between gap-xs" style={{ alignItems: "center", flexWrap: "wrap" }}>
                               <h4 className="text-sm font-semibold" style={{ margin: 0 }}>Internal signals</h4>
                               <span className="badge">{internalSignals.length}</span>
                             </div>
-                            <div className="stack-xs">
-                              {internalSignals.slice(0, 4).map((signal, index) => (
-                                <div key={`${signal.type}-${index}`} className="stack-2xs">
+                            {internalSignals.slice(0, 4).map((signal, index) => {
+                              const display = internalSignalSubjectAndPreview(signal);
+                              return (
+                                <div key={`${signal.type}-${index}`} className="card-flat stack-2xs" style={{ padding: "0.75rem 0.9rem" }}>
                                   <p className="text-sm" style={{ margin: 0 }}>
-                                    {signal.signalSummary?.trim() || "Internal signal"}
+                                    {display.subject}
+                                  </p>
+                                  <p className="text-xs muted" style={{ margin: 0 }}>
+                                    {display.preview}
                                   </p>
                                   <p className="text-xs muted" style={{ margin: 0 }}>
                                     {[signal.source, signal.toolName].filter(Boolean).join(" · ") || "Internal source"}
@@ -476,13 +562,13 @@ export function AgentTracesClient() {
                                     </p>
                                   )}
                                 </div>
-                              ))}
-                              {internalSignals.length > 4 && (
-                                <p className="text-xs muted" style={{ margin: 0 }}>
-                                  +{internalSignals.length - 4} more internal signal(s)
-                                </p>
-                              )}
-                            </div>
+                              );
+                            })}
+                            {internalSignals.length > 4 && (
+                              <p className="text-xs muted" style={{ margin: 0 }}>
+                                +{internalSignals.length - 4} more internal signal(s)
+                              </p>
+                            )}
                           </div>
                         )}
                       </div>
@@ -626,10 +712,16 @@ export function AgentTracesClient() {
                                 )}
                                 {signal.type === "internal" ? (
                                   <>
+                                    {(() => {
+                                      const display = internalSignalSubjectAndPreview(signal);
+                                      return (
+                                        <>
+                                    <p className="text-sm font-medium" style={{ margin: 0 }}>{display.subject}</p>
+                                    <p className="text-sm muted" style={{ margin: "0.25rem 0 0 0" }}>{display.preview}</p>
                                     <p className="text-xs muted" style={{ margin: 0 }}>{signal.source} · {signal.toolName}</p>
-                                    {signal.signalSummary && (
-                                      <p className="text-sm" style={{ margin: "0.35rem 0 0 0", whiteSpace: "pre-wrap" }}>{signal.signalSummary}</p>
-                                    )}
+                                        </>
+                                      );
+                                    })()}
                                     {signal.rawContent != null && (
                                       <details className="text-xs muted" style={{ marginTop: "0.5rem" }}>
                                         <summary>Raw content</summary>

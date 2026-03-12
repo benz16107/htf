@@ -110,7 +110,7 @@ export function DirectEmailConnectionCard() {
       {banner ? <StatusBanner variant={banner.variant} title={banner.title} message={banner.message} /> : null}
       <h3 style={{ margin: 0 }}>Direct email sync</h3>
       <p className="muted text-sm" style={{ margin: 0 }}>
-        Connect Gmail directly for native inbox retrieval. Zapier remains available for your non-email tools.
+        Connect Gmail for native inbox sync.
       </p>
 
       {loading ? (
@@ -122,7 +122,7 @@ export function DirectEmailConnectionCard() {
             {status?.connected ? `Connected${status.emailAddress ? ` as ${status.emailAddress}` : ""}` : "Not connected"}
           </p>
           <p className="muted text-xs" style={{ margin: 0 }}>
-            Direct Gmail now handles inbox retrieval and can also send mitigation emails when send permission is granted. Zapier email tools are skipped to avoid duplicate inbox sources.
+            Zapier email tools are skipped to avoid duplicates.
           </p>
           <p className="text-xs" style={{ margin: 0 }}>
             <strong>Send email:</strong> {status?.sendReady ? "Ready" : "Reconnect Gmail to grant send access"}
@@ -147,7 +147,7 @@ export function DirectEmailConnectionCard() {
           )}
           {status?.connected && !status?.sendReady && (
             <p className="muted text-xs" style={{ margin: 0 }}>
-              This Gmail connection was likely created before send access was added. Click <strong>Reconnect Gmail</strong> and approve the updated permissions to enable outbound email.
+              Reconnect Gmail to grant send access.
             </p>
           )}
           {status?.oauthReady && !status?.pushReady && (

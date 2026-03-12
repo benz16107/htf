@@ -11,7 +11,7 @@ export function AppHeader({ title, subtitle, actions }: AppHeaderProps) {
         <h1>{title}</h1>
         {actions}
       </div>
-      {subtitle && <p className="muted">{subtitle}</p>}
+      {subtitle && <p className="product-subtitle">{subtitle}</p>}
     </header>
   );
 }

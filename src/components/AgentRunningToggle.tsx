@@ -113,6 +113,12 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
       return;
     }
     const tick = async () => {
+      await fetch("/api/risk/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suppressAutonomousTrigger: true }),
+      }).catch(() => null);
+
       const runId = runIdRef.current;
       const body = runId
         ? { runId }
@@ -217,7 +223,7 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
               width={44}
               height={24}
               onColor="var(--accent)"
-              offColor="var(--muted)"
+              offColor="var(--surface-container-highest)"
               className={on ? "agent-toggle--on" : undefined}
             />
             <span className="text-sm font-medium" style={{ margin: 0, color: on ? "var(--accent-text)" : undefined }}>
@@ -256,8 +262,8 @@ export function AgentRunningToggle({ compact }: { compact?: boolean }) {
           title={on ? "Running - click to stop" : "Stopped - click to start"}
           width={44}
           height={24}
-          onColor="var(--success)"
-          offColor="var(--muted)"
+          onColor="var(--accent)"
+          offColor="var(--surface-container-highest)"
           className={on ? "agent-toggle--on" : undefined}
         />
         <span className="text-sm muted" style={{ margin: 0, color: on ? "var(--accent-text)" : undefined }}>

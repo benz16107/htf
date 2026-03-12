@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getRequestOrigin } from "@/lib/request-origin";
 import { isNonRiskNotification } from "@/lib/signal-filters";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 import { getGoogleEmailConnectionStatus, listRecentGmailMessages, markGoogleEmailSync } from "@/server/email/google";
 import { triggerAutonomousRunForEvents } from "@/server/risk/live-internal-signals";
 import { callZapierMCPTool } from "@/server/zapier/mcp-client";
@@ -27,6 +28,73 @@ function isSetupOrConfigNoise(text: string): boolean {
   if (t.includes("get_configuration_url")) return true;
   if (/https?:\/\/mcp\.zapier\.com\/mcp\/servers\/[^/\s]+\/config/i.test(text)) return true;
   return false;
+}
+
+function extractFollowUpQuestionText(content: unknown[]): string | null {
+  if (!Array.isArray(content) || content.length === 0) return null;
+  for (const item of content) {
+    let raw: string | null = null;
+    if (typeof item === "string") raw = item.trim();
+    else if (item && typeof item === "object" && "text" in item && typeof (item as { text?: unknown }).text === "string") {
+      raw = String((item as { text: string }).text).trim();
+    }
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const followUp = parsed.followUpQuestion;
+      if (typeof followUp === "string" && followUp.trim()) return followUp.trim();
+    } catch {
+      if (raw.includes("followUpQuestion")) return raw;
+    }
+  }
+  return null;
+}
+
+function extractQuotedSpreadsheetOptions(text: string): string[] {
+  const options: string[] = [];
+  const seen = new Set<string>();
+  const quoted = text.matchAll(/["“]([^"\n]+)["”]/g);
+  for (const match of quoted) {
+    const value = match[1]?.trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push(value);
+  }
+  return options;
+}
+
+function chooseBestSpreadsheetOption(options: string[]): string | null {
+  if (!options.length) return null;
+  const score = (name: string): number => {
+    const n = name.toLowerCase();
+    let s = 0;
+    if (/logistics|inventory|supply|disruption|vendor|shipment|operations|risk/.test(n)) s += 6;
+    if (/tracking|status|global|lead time|procurement/.test(n)) s += 3;
+    if (/financial|finance|accounting|pnl|ledger/.test(n)) s -= 2;
+    return s;
+  };
+  return [...options].sort((a, b) => score(b) - score(a))[0] ?? null;
+}
+
+function withSpreadsheetHintArgs(
+  baseArgs: Record<string, unknown>,
+  spreadsheetName: string
+): Record<string, unknown> {
+  const instructions = String(baseArgs.instructions ?? "Return the 20 most recent rows.");
+  return {
+    ...baseArgs,
+    instructions:
+      `${instructions} Use the spreadsheet "${spreadsheetName}". ` +
+      "Return up to 20 rows with headers and include the source sheet/tab. If a range is required, use a broad table range like A:Z and do not ask follow-up questions.",
+    spreadsheet: spreadsheetName,
+    spreadsheet_name: spreadsheetName,
+    spreadsheetTitle: spreadsheetName,
+    file_name: spreadsheetName,
+    sheet_name: "Sheet1",
+    range: "A:Z",
+  };
 }
 
 function textFromRawItem(raw: unknown): string[] {
@@ -59,7 +127,8 @@ function contentForRiskCheck(summary: string, raw?: unknown): string {
  * Returns one boolean per item. If API key missing or request fails, returns all false (don't ingest unclassified).
  */
 async function classifyRiskRelevance(
-  items: { summary: string; raw?: unknown }[]
+  items: { summary: string; raw?: unknown }[],
+  model: string,
 ): Promise<boolean[]> {
   if (items.length === 0) return [];
   if (!process.env.GEMINI_API_KEY) return items.map(() => false);
@@ -73,7 +142,7 @@ async function classifyRiskRelevance(
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model,
       contents: prompt,
       config: { responseMimeType: "application/json" },
     });
@@ -361,8 +430,11 @@ function isIngestibleWithoutUserInput(toolName: string): boolean {
   const lower = toolName.toLowerCase();
   if (lower.includes("get_configuration_url") || lower.includes("configuration_url")) return false;
   if (lower.includes("attachment_by_filename") || lower.includes("get_attachment")) return false;
-  if (lower.includes("by_id") && (lower.includes("retrieve") || lower.includes("file") || lower.includes("folder"))) return false;
+  // Most *_by_id tools require a record/spreadsheet/message id we do not have during autonomous polling.
+  if (lower.includes("by_id")) return false;
   if (lower.includes("by_filename")) return false;
+  if (lower.includes("clear_") || lower.includes("_clear") || lower.includes("format_") || lower.includes("_format")) return false;
+  if (lower.includes("append_") || lower.includes("_append") || lower.includes("insert_") || lower.includes("_insert")) return false;
   return true;
 }
 
@@ -371,6 +443,7 @@ function getDefaultArgsForTool(toolName: string, syncedAfter: Date | null = null
   const lower = toolName.toLowerCase();
   const isGmail = lower.includes("gmail");
   const isEmail = isGmail || lower.includes("outlook") || lower.includes("microsoft") || lower.includes("mail");
+  const isSheet = lower.includes("sheet") || lower.includes("spreadsheet");
   const syncedAfterText = syncedAfter ? ` Only return items received after ${syncedAfter.toISOString()}.` : "";
   let instructions = "Return the 20 most recent items.";
   if (lower.includes("gmail_find") || lower.includes("gmail_find_email") || (isGmail && (lower.includes("find") || lower.includes("list")))) {
@@ -381,6 +454,10 @@ function getDefaultArgsForTool(toolName: string, syncedAfter: Date | null = null
     instructions = `Get my 20 most recent emails from my inbox. Return subject, sender, date, snippet, and message body for each.${syncedAfterText}`;
   } else if (lower.includes("drive") && lower.includes("retrieve")) {
     instructions = "List my 20 most recently modified files or folders (or recent items I have access to).";
+  } else if (isSheet) {
+    instructions =
+      "Return up to 20 recent rows from a spreadsheet relevant to operations, logistics, inventory, suppliers, or disruptions. " +
+      "Include column headers and row values in machine-readable JSON. If multiple spreadsheets exist, prefer logistics/inventory/supply-chain trackers.";
   } else if (lower.includes("list") || lower.includes("search") || lower.includes("find")) {
     instructions = "Return up to 20 of the most recent or relevant items.";
   }
@@ -407,33 +484,41 @@ function getDefaultArgsForTool(toolName: string, syncedAfter: Date | null = null
  * When autonomous agent has internalSignalMode "live", triggers a run for the newly created events.
  */
 export async function POST(req: Request) {
-  const session = await getSession();
-  if (!session?.companyId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  let requestedReceivedAfter: Date | null = null;
+  let body: Record<string, unknown> = {};
   try {
-    const body = await req.json();
-    if (body && typeof body === "object" && typeof (body as { receivedAfter?: unknown }).receivedAfter === "string") {
-      const parsed = new Date((body as { receivedAfter: string }).receivedAfter);
-      if (!Number.isNaN(parsed.getTime())) {
-        requestedReceivedAfter = parsed;
-      }
-    }
+    body = (await req.json()) as Record<string, unknown>;
   } catch {
     // no JSON body provided
   }
 
+  const session = await getSession();
+  const cronSecret = process.env.CRON_SECRET;
+  const headerCronSecret = req.headers.get("x-cron-secret");
+  const companyIdFromBody = typeof body.companyId === "string" ? body.companyId : null;
+  const isCronTrigger = Boolean(cronSecret && headerCronSecret === cronSecret && companyIdFromBody);
+  const companyId = isCronTrigger ? companyIdFromBody : (session?.companyId ?? null);
+  if (!companyId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let requestedReceivedAfter: Date | null = null;
+  if (typeof body.receivedAfter === "string") {
+    const parsed = new Date(body.receivedAfter);
+    if (!Number.isNaN(parsed.getTime())) {
+      requestedReceivedAfter = parsed;
+    }
+  }
+
   const [config, toolSelections, gmailStatus, zapierSyncState] = await Promise.all([
-    getZapierMCPConfigForCompany(session.companyId),
-    getZapierMCPToolSelections(session.companyId),
-    getGoogleEmailConnectionStatus(session.companyId),
+    getZapierMCPConfigForCompany(companyId),
+    getZapierMCPToolSelections(companyId),
+    getGoogleEmailConnectionStatus(companyId),
     db.integrationConnection.findUnique({
-      where: { companyId_provider: { companyId: session.companyId, provider: "zapier_mcp" } },
+      where: { companyId_provider: { companyId, provider: "zapier_mcp" } },
       select: { connectedAt: true, lastSyncAt: true },
     }),
   ]);
+  const model = await getGeminiModelForCompany(companyId);
 
   const inputContextTools = toolSelections.inputContextTools;
   const hasDirectGmail = gmailStatus.connected;
@@ -484,7 +569,7 @@ export async function POST(req: Request) {
     try {
       // Direct Gmail already applies its own last-sync checkpoint.
       // Do not apply Zapier-derived baseline again here.
-      const recentItems = await listRecentGmailMessages(session.companyId, 20);
+      const recentItems = await listRecentGmailMessages(companyId, 20);
       const parsedCount = recentItems.length;
       if (recentItems.length === 0) {
         toolResults.push({
@@ -497,7 +582,7 @@ export async function POST(req: Request) {
         });
       } else {
         const normalized = recentItems.map((item) => ({ summary: item.summary, raw: item.raw }));
-        const riskFlags = await classifyRiskRelevance(normalized);
+        const riskFlags = await classifyRiskRelevance(normalized, model);
         let riskItems = recentItems.filter((_, i) => riskFlags[i]);
         if (riskItems.length === 0 && recentItems.length > 0 && !isNonRiskNotification(recentItems[0].summary)) {
           riskItems = [recentItems[0]];
@@ -507,7 +592,7 @@ export async function POST(req: Request) {
         for (const item of riskItems) {
           const existing = await db.ingestedEvent.findFirst({
             where: {
-              companyId: session.companyId,
+              companyId,
               toolName: item.toolName,
               externalId: item.externalId,
             },
@@ -516,7 +601,7 @@ export async function POST(req: Request) {
 
           const event = await db.ingestedEvent.create({
             data: {
-              companyId: session.companyId,
+              companyId,
               source: item.source,
               toolName: item.toolName,
               externalId: item.externalId,
@@ -537,7 +622,7 @@ export async function POST(req: Request) {
           message: added === 0 ? "All Gmail emails already ingested or skipped" : undefined,
         });
       }
-      await markGoogleEmailSync(session.companyId, syncCompletedAt);
+      await markGoogleEmailSync(companyId, syncCompletedAt);
     } catch (err) {
       console.error("Direct Gmail ingest failed:", err);
       toolResults.push({
@@ -552,7 +637,20 @@ export async function POST(req: Request) {
   for (const toolName of readOnlyTools) {
     try {
       const args = getDefaultArgsForTool(toolName, isEmailLikeTool(toolName) ? effectiveEmailBaseline : null);
-      const result = await callZapierMCPTool(config, toolName, args);
+      let result = await callZapierMCPTool(config, toolName, args);
+      const lowerTool = toolName.toLowerCase();
+      const isSheetTool = lowerTool.includes("sheet") || lowerTool.includes("spreadsheet");
+      if (isSheetTool) {
+        const followUp = extractFollowUpQuestionText(result.content ?? []);
+        if (followUp && /spreadsheet|sheet|range|which/i.test(followUp)) {
+          const options = extractQuotedSpreadsheetOptions(followUp);
+          const selected = chooseBestSpreadsheetOption(options);
+          if (selected) {
+            const retryArgs = withSpreadsheetHintArgs(args, selected);
+            result = await callZapierMCPTool(config, toolName, retryArgs);
+          }
+        }
+      }
       if (result.isError) {
         console.warn(`Ingest: ${toolName} returned isError`, JSON.stringify(result.content?.slice(0, 1)).slice(0, 300));
         toolResults.push({ name: toolName, status: "error", count: 0, rawCount: result.content?.length ?? 0, message: "Zapier returned an error" });
@@ -616,13 +714,13 @@ export async function POST(req: Request) {
           }
         }
         const fallbackRelevant = fallback && !isFollowUpOrError(fallback) && !isSetupOrConfigNoise(fallback) && !isNonRiskNotification(fallback)
-          ? (await classifyRiskRelevance([{ summary: fallback, raw: content[0] }]))[0]
+          ? (await classifyRiskRelevance([{ summary: fallback, raw: content[0] }], model))[0]
           : false;
         if (fallbackRelevant) {
           const externalId = getExternalId(content[0]);
           if (externalId) {
             const existing = await db.ingestedEvent.findFirst({
-              where: { companyId: session.companyId, toolName, externalId },
+              where: { companyId, toolName, externalId },
             });
             if (existing) {
               toolResults.push({ name: toolName, status: "ok", count: 0, rawCount: rawContentLength, parsedCount: 0 });
@@ -631,7 +729,7 @@ export async function POST(req: Request) {
           }
           const event = await db.ingestedEvent.create({
             data: {
-              companyId: session.companyId,
+              companyId,
               source,
               toolName,
               externalId: externalId ?? undefined,
@@ -646,7 +744,7 @@ export async function POST(req: Request) {
         }
         continue;
       }
-      const riskFlags = await classifyRiskRelevance(items);
+      const riskFlags = await classifyRiskRelevance(items, model);
       let riskItems = items.filter((_, i) => riskFlags[i]);
       // If no emails were classified as risk-relevant but we have items, include the most recent one if it's not clearly a non-risk notification (so the autonomous agent can still assess or skip it)
       const isEmailTool = isGmailEmailTool(toolName) || /outlook|microsoft|mail|email/.test(toolName.toLowerCase());
@@ -661,13 +759,13 @@ export async function POST(req: Request) {
         const externalId = getExternalId(raw);
         if (externalId) {
           const existing = await db.ingestedEvent.findFirst({
-            where: { companyId: session.companyId, toolName, externalId },
+            where: { companyId, toolName, externalId },
           });
           if (existing) continue;
         }
         const event = await db.ingestedEvent.create({
           data: {
-            companyId: session.companyId,
+            companyId,
             source,
             toolName,
             externalId: externalId ?? undefined,
@@ -694,16 +792,18 @@ export async function POST(req: Request) {
 
   if (config) {
     await db.integrationConnection.updateMany({
-      where: { companyId: session.companyId, provider: "zapier_mcp" },
+      where: { companyId, provider: "zapier_mcp" },
       data: { lastSyncAt: syncCompletedAt },
     });
   }
 
+  const suppressAutonomousTrigger = body.suppressAutonomousTrigger === true;
+
   // When internal signals are "live", trigger autonomous run for the new events so a case starts immediately.
-  if (created.length > 0 && session.companyId) {
+  if (created.length > 0 && !suppressAutonomousTrigger) {
     try {
       await triggerAutonomousRunForEvents({
-        companyId: session.companyId,
+        companyId,
         eventIds: created.map((e) => e.id),
         origin: getRequestOrigin(req),
         cookieHeader: req.headers.get("cookie"),

@@ -3,8 +3,19 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-export function DashboardSidebar({ email, companyName }: { email: string | null; companyName: string | null }) {
+export function DashboardSidebar({ companyName }: { companyName: string | null }) {
   const pathname = usePathname();
+  const navLinks = [
+    { href: "/dashboard", label: "Overview", icon: "space_dashboard" },
+    { href: "/dashboard/logs", label: "Autonomous agent", icon: "smart_toy" },
+    { href: "/dashboard/triggered-risk", label: "Signals & risk", icon: "notification_important" },
+    { href: "/dashboard/plans", label: "Mitigation plans", icon: "task_alt" },
+    { href: "/dashboard/post-analysis", label: "Memory", icon: "history" },
+  ] as const;
+  const configLinks = [
+    { href: "/dashboard/profile", label: "Company profile", icon: "apartment" },
+    { href: "/dashboard/integrations", label: "Integrations", icon: "route" },
+  ] as const;
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard";
@@ -14,39 +25,34 @@ export function DashboardSidebar({ email, companyName }: { email: string | null;
   return (
     <>
       <Link href="/dashboard" className="sidebar-brand" style={{ textDecoration: "none", color: "inherit" }}>
-        <div className="sidebar-logo-mark" />
-        <span>PENTAGON</span>
+        <div className="brand-mark" />
+        <span className="product-wordmark">PENTAGON</span>
       </Link>
 
       <nav className="stack-sm">
         <p className="sidebar-section-label">Operations</p>
         <div className="sidebar-divider" />
-        <Link href="/dashboard" className={`sidebar-link${isActive("/dashboard") ? " active" : ""}`}>
-          Overview
-        </Link>
-        <Link href="/dashboard/logs" className={`sidebar-link${isActive("/dashboard/logs") ? " active" : ""}`}>
-          Autonomous agent
-        </Link>
-        <Link href="/dashboard/triggered-risk" className={`sidebar-link${isActive("/dashboard/triggered-risk") ? " active" : ""}`}>
-          Signals &amp; risk
-        </Link>
-        <Link href="/dashboard/plans" className={`sidebar-link${isActive("/dashboard/plans") ? " active" : ""}`}>
-          Mitigation plans
-        </Link>
-        <Link href="/dashboard/post-analysis" className={`sidebar-link${isActive("/dashboard/post-analysis") ? " active" : ""}`}>
-          Memory
-        </Link>
+        {navLinks.map((link) => (
+          <Link key={link.href} href={link.href} className={`sidebar-link${isActive(link.href) ? " active" : ""}`}>
+            <span className="material-symbols-rounded sidebar-link__icon" aria-hidden>
+              {link.icon}
+            </span>
+            <span className="sidebar-link__label">{link.label}</span>
+          </Link>
+        ))}
       </nav>
 
       <nav className="stack-sm sidebar-config">
         <p className="sidebar-section-label">Configuration</p>
         <div className="sidebar-divider" />
-        <Link href="/dashboard/profile" className={`sidebar-link${isActive("/dashboard/profile") ? " active" : ""}`}>
-          Company profile
-        </Link>
-        <Link href="/dashboard/integrations" className={`sidebar-link${isActive("/dashboard/integrations") ? " active" : ""}`}>
-          Integrations
-        </Link>
+        {configLinks.map((link) => (
+          <Link key={link.href} href={link.href} className={`sidebar-link${isActive(link.href) ? " active" : ""}`}>
+            <span className="material-symbols-rounded sidebar-link__icon" aria-hidden>
+              {link.icon}
+            </span>
+            <span className="sidebar-link__label">{link.label}</span>
+          </Link>
+        ))}
       </nav>
 
       <div className="sidebar-footer">

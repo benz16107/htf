@@ -9,7 +9,7 @@ import { InternalSignalSection } from "./InternalSignalSection";
 import { RiskAssessmentSection } from "./RiskAssessmentSection";
 import { AssessmentOutputsSection } from "./AssessmentOutputsSection";
 import { AssessmentArchiveSection } from "./AssessmentArchiveSection";
-import { ManualPreventiveCheck } from "./ManualPreventiveCheck";
+import { ManualSignalSection } from "./ManualSignalSection";
 import type { SelectedSignal, AssessmentOutput, ArchivedOutput } from "./types";
 import { PENDING_OUTPUT_KEY } from "./types";
 
@@ -343,6 +343,9 @@ export function TriggeredRiskClient({
               <InternalSignalSection onAddToAssessment={addToAssessment} />
             </div>
           )}
+          <div data-animate-item>
+            <ManualSignalSection onAddToAssessment={addToAssessment} />
+          </div>
         </AnimeStagger>
         <div data-animate-item>
           <RiskAssessmentSection
@@ -358,9 +361,6 @@ export function TriggeredRiskClient({
           onSendToMitigation={sendToMitigation}
           onRemoveOutput={removeOutput}
         />
-      </div>
-      <div data-animate-section>
-        <ManualPreventiveCheck onAddToAssessment={addToAssessment} />
       </div>
       <div data-animate-section>
         <AssessmentArchiveSection

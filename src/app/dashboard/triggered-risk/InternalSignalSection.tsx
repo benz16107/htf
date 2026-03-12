@@ -5,27 +5,18 @@ import { ConfirmModal } from "@/components/ConfirmModal";
 import { groupToolsByApp } from "@/lib/integration-tool-hint";
 import type { SelectedSignal } from "./types";
 
-const AUTO_SCAN_STORAGE_KEY = "risk-auto-scan";
 const INTEGRATIONS_FILTER_KEY = "risk-internal-integrations";
-const INTERNAL_CONFIG_KEY = "risk-internal-config";
 const INTERNAL_EVENTS_CACHE_KEY = "risk-internal-events-cache";
 const INTERNAL_LAST_SYNC_TOOLS_KEY = "risk-internal-last-sync-tools";
 const LIVE_REFRESH_MS = 5_000;
-
-const INTERVAL_OPTIONS = [
-  { value: 1, label: "1 min" },
-  { value: 5, label: "5 min" },
-  { value: 10, label: "10 min" },
-  { value: 15, label: "15 min" },
-  { value: 30, label: "30 min" },
-  { value: 60, label: "1 hour" },
-] as const;
 
 type EventItem = {
   id: string;
   source: string;
   toolName: string;
   signal: string;
+  subject?: string;
+  preview?: string;
   time: string;
 };
 
@@ -131,15 +122,6 @@ function isEmailIntegrationName(name: string | null | undefined): boolean {
   );
 }
 
-function getStoredAutoScan(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return localStorage.getItem(AUTO_SCAN_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
 function getStoredIntegrationFilter(): string[] | null {
   if (typeof window === "undefined") return null;
   try {
@@ -155,28 +137,6 @@ function getStoredIntegrationFilter(): string[] | null {
 function setStoredIntegrationFilter(integrations: string[]) {
   try {
     localStorage.setItem(INTEGRATIONS_FILTER_KEY, JSON.stringify(integrations));
-  } catch {}
-}
-
-type InternalConfig = { intervalMinutes: number };
-
-function getStoredInternalConfig(): InternalConfig {
-  if (typeof window === "undefined") return { intervalMinutes: 5 };
-  try {
-    const raw = localStorage.getItem(INTERNAL_CONFIG_KEY);
-    if (!raw) return { intervalMinutes: 5 };
-    const parsed = JSON.parse(raw) as { intervalMinutes?: number };
-    const min = parsed?.intervalMinutes;
-    if (typeof min === "number" && INTERVAL_OPTIONS.some((o) => o.value === min)) return { intervalMinutes: min };
-    return { intervalMinutes: 5 };
-  } catch {
-    return { intervalMinutes: 5 };
-  }
-}
-
-function setStoredInternalConfig(config: InternalConfig) {
-  try {
-    localStorage.setItem(INTERNAL_CONFIG_KEY, JSON.stringify(config));
   } catch {}
 }
 
@@ -268,7 +228,12 @@ function InternalSignalRow({
         <span className="trace-title text-sm">{ev.source}</span>
         <span className="muted text-xs">{ev.time}</span>
       </div>
-      <p className="text-sm">&ldquo;{ev.signal}&rdquo;</p>
+      <p className="text-sm" style={{ margin: 0, fontWeight: 600 }}>
+        {ev.subject || "Internal signal"}
+      </p>
+      <p className="muted text-sm" style={{ margin: "0.2rem 0 0 0" }}>
+        {ev.preview || "(No email message captured)"}
+      </p>
       <div className="trace-actions">
         <span className="badge">From {ev.toolName}</span>
         <div className="row gap-xs">
@@ -281,6 +246,9 @@ function InternalSignalRow({
               if (next) await loadDetails();
             }}
           >
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              {detailsOpen ? "expand_less" : "expand_more"}
+            </span>
             {detailsOpen ? "Hide details" : "Show details"}
           </button>
           {onAddToAssessment && (
@@ -296,6 +264,9 @@ function InternalSignalRow({
                 })
               }
             >
+              <span className="material-symbols-rounded btn__icon" aria-hidden>
+                playlist_add
+              </span>
               Add to risk assessment
             </button>
           )}
@@ -307,6 +278,9 @@ function InternalSignalRow({
               title="Remove this signal"
               aria-label="Remove signal"
             >
+              <span className="material-symbols-rounded btn__icon" aria-hidden>
+                delete
+              </span>
               Remove
             </button>
           )}
@@ -380,11 +354,9 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [autoScan, setAutoScan] = useState(false);
   const [selectedIntegrations, setSelectedIntegrations] = useState<string[] | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [listExpanded, setListExpanded] = useState(false);
-  const [intervalMinutes, setIntervalMinutes] = useState(5);
   const [clearingAll, setClearingAll] = useState(false);
   const [lastSyncTools, setLastSyncTools] = useState<{ name: string; status: string; count: number; rawCount?: number; parsedCount?: number; message?: string }[] | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<null | { type: "one"; id: string } | { type: "all" }>(null);
@@ -415,7 +387,7 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
         setEvents([]);
         return;
       }
-      const nextEvents = (data.events || []).map((e: { id: string; source: string; toolName: string; signal: string; time: string }) => ({
+      const nextEvents = (data.events || []).map((e: { id: string; source: string; toolName: string; signal: string; subject?: string; preview?: string; time: string }) => ({
           ...e,
           time: formatTime(e.time),
       })) as EventItem[];
@@ -431,8 +403,6 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
 
   useEffect(() => {
     mounted.current = true;
-    setAutoScan(getStoredAutoScan());
-    setIntervalMinutes(getStoredInternalConfig().intervalMinutes);
     const cachedEvents = getStoredEvents();
     if (cachedEvents.length > 0) {
       setEvents(cachedEvents);
@@ -545,24 +515,6 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
     }
   }, [fetchEvents]);
 
-  useEffect(() => {
-    if (!autoScan) return;
-    runIngest();
-    const ms = intervalMinutes * 60 * 1000;
-    const t = setInterval(() => {
-      if (mounted.current && autoScan) runIngest();
-    }, ms);
-    return () => clearInterval(t);
-  }, [autoScan, intervalMinutes]);
-
-  const handleToggleAutoScan = () => {
-    const next = !autoScan;
-    setAutoScan(next);
-    try {
-      localStorage.setItem(AUTO_SCAN_STORAGE_KEY, next ? "1" : "0");
-    } catch {}
-  };
-
   const filteredEvents = displaySet
     ? events.filter((e) => {
         const filterKeys = isEmailIntegrationName(e.toolName) || isEmailIntegrationName(e.source)
@@ -592,7 +544,6 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
   };
 
   const savePreferences = () => {
-    setStoredInternalConfig({ intervalMinutes });
     if (selectedIntegrations === null) {
       try {
         localStorage.removeItem(INTEGRATIONS_FILTER_KEY);
@@ -655,56 +606,31 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
             onClick={() => { setConfigOpen((o) => !o); setListExpanded(true); }}
             aria-expanded={configOpen}
           >
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              tune
+            </span>
             Configure
           </button>
-          <label className="row" style={{ alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.875rem" }}>
-            <input
-              type="checkbox"
-              checked={autoScan}
-              onChange={handleToggleAutoScan}
-              aria-label="Auto scan"
-            />
-            <span className={autoScan ? "" : "muted"}>Auto scan</span>
-          </label>
-          {autoScan ? (
-            <span className="muted text-sm">{syncing ? "Scanning…" : `Auto scan every ${intervalMinutes} min`}</span>
-          ) : (
-            <button type="button" className="btn primary btn-sm" onClick={() => runIngest()} disabled={syncing}>
-              {syncing ? "Syncing…" : "Sync now"}
-            </button>
-          )}
+          <button type="button" className="btn primary btn-sm" onClick={() => runIngest()} disabled={syncing}>
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              sync
+            </span>
+            {syncing ? "Syncing…" : "Sync now"}
+          </button>
         </div>
       </div>
 
       {configOpen && (
-        <div className="card-flat stack-sm" style={{ margin: "0 1.25rem 0.5rem", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--border)" }}>
-          <div className="card-flat stack-xs" style={{ padding: "0.75rem", border: "1px solid var(--border)" }}>
+        <div className="stack-sm" style={{ margin: "0 1.25rem 0.5rem", padding: "0.5rem 0.75rem" }}>
+          <div className="stack-xs" style={{ padding: "0.5rem 0" }}>
             <p className="text-sm font-medium" style={{ margin: 0 }}>Internal signal setup</p>
             <p className="muted text-xs" style={{ margin: 0 }}>
-              Recommended: connect Gmail in Dashboard → Integrations → Direct email sync for native inbox retrieval and Gmail push.
-              Non-email tools still come from Integrations input context.
+              Connect Gmail in Dashboard -&gt; Integrations -&gt; Direct email sync.
             </p>
-          </div>
-          <p className="text-sm font-medium" style={{ margin: 0 }}>Auto scan interval</p>
-          <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.35rem" }}>
-            {INTERVAL_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                className={intervalMinutes === opt.value ? "btn primary btn-sm" : "btn secondary btn-sm"}
-                onClick={() => {
-                  setIntervalMinutes(opt.value);
-                  setPrefsDirty(true);
-                  setPrefsSavedAt(null);
-                }}
-              >
-                {opt.label}
-              </button>
-            ))}
           </div>
           <p className="text-sm font-medium" style={{ margin: "0.75rem 0 0 0" }}>Other integrations to show</p>
           {integrations.length === 0 ? (
-            <p className="muted text-xs" style={{ margin: "0.25rem 0 0 0" }}>Connect email or add Zapier input-context tools in Dashboard → Integrations, then Save.</p>
+            <p className="muted text-xs" style={{ margin: "0.25rem 0 0 0" }}>No integrations yet.</p>
           ) : (
             <div className="integrations-zone__list" style={{ maxHeight: 220 }}>
               {groupToolsByApp(integrations.map((name) => ({ name }))).map(({ appKey, appLabel, tools: appTools }) => {
@@ -731,6 +657,9 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
                             setPrefsSavedAt(null);
                           }}
                         >
+                          <span className="material-symbols-rounded btn__icon" aria-hidden>
+                            select_all
+                          </span>
                           Select all
                         </button>
                         <button
@@ -746,6 +675,9 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
                             setPrefsSavedAt(null);
                           }}
                         >
+                          <span className="material-symbols-rounded btn__icon" aria-hidden>
+                            deselect
+                          </span>
                           Clear
                         </button>
                       </span>
@@ -771,6 +703,9 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
           )}
           {displaySet && displaySet.size < integrations.length && (
             <button type="button" className="btn secondary btn-sm" style={{ marginTop: "0.5rem" }} onClick={showAll}>
+              <span className="material-symbols-rounded btn__icon" aria-hidden>
+                visibility
+              </span>
               Show all
             </button>
           )}
@@ -781,6 +716,9 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
               onClick={savePreferences}
               disabled={!prefsDirty}
             >
+              <span className="material-symbols-rounded btn__icon" aria-hidden>
+                save
+              </span>
               Save preferences
             </button>
             {prefsSavedAt ? <span className="text-xs muted">Saved</span> : null}
@@ -793,6 +731,9 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
             disabled={clearingAll || events.length === 0}
             onClick={() => events.length > 0 && setConfirmDelete({ type: "all" })}
           >
+            <span className="material-symbols-rounded btn__icon" aria-hidden>
+              delete_sweep
+            </span>
             {clearingAll ? "Removing…" : "Remove all signals"}
           </button>
         </div>
@@ -823,7 +764,7 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
             return `${t.name}:${detail}`;
           }).join(" · ")}</p>
           {hasErrors && (
-            <p style={{ margin: "0.35rem 0 0 0" }}>If Gmail is connected directly, reconnect or sync again. For other tools, ensure they are in <strong>Input context</strong> in Dashboard → Integrations.</p>
+            <p style={{ margin: "0.35rem 0 0 0" }}>Some integrations failed. Reconnect or sync again.</p>
           )}
           {!hasErrors && allNoNewSignals && (
             <p style={{ margin: "0.35rem 0 0 0" }}>No new signals were found since the last sync.</p>
@@ -840,7 +781,7 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
         ) : filteredEvents.length === 0 ? (
           <div className="stack-xs">
             <p className="muted text-sm">
-              {events.length === 0 ? "No events. Turn on Auto scan, connect Gmail directly, or run Sync now." : "No events match filters. Show all or change selection."}
+              {events.length === 0 ? "No events yet." : "No events match filters."}
             </p>
           </div>
         ) : (
@@ -861,6 +802,9 @@ export function InternalSignalSection({ onAddToAssessment }: InternalSignalSecti
                     )
                   }
                 >
+                  <span className="material-symbols-rounded btn__icon" aria-hidden>
+                    playlist_add
+                  </span>
                   Add all to risk assessment
                 </button>
               </div>

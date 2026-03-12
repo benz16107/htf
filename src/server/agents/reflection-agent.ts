@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { db } from "@/lib/db";
+import { getGeminiModelForCompany } from "@/server/gemini-model-preference";
 import { BackboardClient } from "../memory/backboard-client";
 import { buildReflectionPrompt } from "./prompts";
 
@@ -68,8 +69,9 @@ export async function runReflectionAgent(
         actualOutcomeText: input.actualOutcomeText,
     });
 
+    const model = await getGeminiModelForCompany(companyId);
     const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model,
         contents: promptText,
         config: {
             responseMimeType: "application/json",
@@ -99,7 +101,7 @@ export async function runReflectionAgent(
     const incidentClass = typeof output.incidentClass === "string" && output.incidentClass.trim() ? output.incidentClass : "unknown";
 
     // 3. Save to Prisma Playbook
-    const playbookEntry = await db.playbookEntry.create({
+    await db.playbookEntry.create({
         data: {
             companyId,
             incidentClass,

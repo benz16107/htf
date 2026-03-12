@@ -68,7 +68,7 @@ export default function BaselayerSetupPage() {
   return (
     <AnimeStagger className="container stack-xl" itemSelector="[data-animate-section]" delayStep={85}>
       <div data-animate-section>
-        <AppHeader title="Base profile" subtitle="Step 1 of 4" />
+        <AppHeader title="Base profile" subtitle="Step 1 of 5" />
       </div>
 
       <section className="card stack-lg" data-animate-section>

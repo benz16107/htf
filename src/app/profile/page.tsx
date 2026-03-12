@@ -1,5 +1,6 @@
 import { AppHeader } from "@/components/AppHeader";
 import { DeleteAccountSection } from "@/components/DeleteAccountSection";
+import { SupplyChainLinksExplorer } from "@/components/SupplyChainLinksExplorer";
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getCompanySetupSnapshot } from "@/server/company-setup";
@@ -10,7 +11,7 @@ export default async function ProfilePage() {
 
   const snapshot = session.companyId
     ? await getCompanySetupSnapshot(session.companyId)
-    : { baselayer: null, integrations: { inputContextTools: [], executionTools: [], connectors: [] }, highLevel: null };
+    : { baselayer: null, integrations: { inputContextTools: [], executionTools: [], connectors: [] }, supplyChainLinks: [], highLevel: null };
 
   return (
     <main className="container stack-xl">
@@ -56,6 +57,11 @@ export default async function ProfilePage() {
             <p className="muted text-sm">Not configured yet.</p>
           )}
         </article>
+      </section>
+
+      <section className="card stack">
+        <h3>Supply chain links</h3>
+        <SupplyChainLinksExplorer links={snapshot.supplyChainLinks} />
       </section>
 
       <DeleteAccountSection />

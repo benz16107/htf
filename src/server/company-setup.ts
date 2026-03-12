@@ -1,9 +1,11 @@
 import { db } from "@/lib/db";
 import { getZapierMCPToolSelections } from "@/server/zapier/mcp-config";
+import { parseSupplyChainLinks, type SupplyChainLink } from "@/lib/supply-chain-links";
 
 type SetupSnapshot = {
   baselayer: Record<string, string> | null;
   integrations: { inputContextTools: string[]; executionTools: string[]; connectors: string[] };
+  supplyChainLinks: SupplyChainLink[];
   highLevel: Record<string, string> | null;
 };
 
@@ -55,6 +57,7 @@ export async function getCompanySetupSnapshot(
       executionTools: toolSelections.executionTools,
       connectors: allConnectors,
     },
+    supplyChainLinks: parseSupplyChainLinks(base?.stakeholderMap),
     highLevel: highLevel
       ? {
           riskClassification: extractJsonSummary(highLevel.existingRiskAnalysis),

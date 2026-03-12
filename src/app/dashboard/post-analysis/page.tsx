@@ -62,7 +62,7 @@ export default async function PostAnalysisPage() {
         },
       });
       memoryThreads = [{ id: "created" }];
-    } catch (_) {
+    } catch {
       // leave memoryThreads empty so we show "Not linked"
     }
   }
@@ -100,7 +100,12 @@ export default async function PostAnalysisPage() {
             <span className="text-xs uppercase muted">Setup</span>
             <span className="font-medium">{setupComplete ? "Complete" : "Incomplete"}</span>
             {!setupComplete && (
-              <Link href="/setup/baselayer" className="btn secondary btn-sm" style={{ marginTop: "0.25rem" }}>Complete setup</Link>
+              <Link href="/setup/baselayer" className="btn secondary btn-sm" style={{ marginTop: "0.25rem" }}>
+                <span className="material-symbols-rounded btn__icon" aria-hidden>
+                  checklist
+                </span>
+                Complete setup
+              </Link>
             )}
           </div>
           <div className="card-flat stack-xs" style={{ padding: "1rem" }}>
