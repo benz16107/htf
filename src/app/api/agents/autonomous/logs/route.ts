@@ -55,6 +55,7 @@ type LogEntrySerialized = {
   /** Filled when planId present */
   plan?: {
     id: string;
+    createdAt: string;
     status: string;
     executionMode: string;
     actions: unknown;
@@ -196,6 +197,7 @@ export async function GET() {
         planRows.forEach((p) =>
           plans.set(p.id, {
             id: p.id,
+            createdAt: p.createdAt.toISOString(),
             status: p.status,
             executionMode: p.executionMode,
             actions: p.actions,

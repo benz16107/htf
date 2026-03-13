@@ -19,7 +19,10 @@ export function LogsPageHeaderActions() {
 
   return (
     <>
-      <div className="row gap-sm" style={{ flexWrap: "wrap", alignItems: "center" }}>
+      <div
+        className="row gap-sm"
+        style={{ flexWrap: "wrap", alignItems: "center", marginLeft: "auto", justifyContent: "flex-end" }}
+      >
         <AgentRunningToggle compact />
         <button
           type="button"

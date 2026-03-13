@@ -28,7 +28,7 @@ export default async function DashboardHomePage({
   let automationLevel = "off";
   let geminiModel = await getGeminiModelForCompany(session?.companyId);
   let signalSources: "internal_only" | "external_only" | "both" = "both";
-  let lastRun: {
+  let recentRuns: Array<{
     runId: string;
     processed: number;
     created: number;
@@ -38,7 +38,7 @@ export default async function DashboardHomePage({
     externalCandidates?: number;
     skipReasonsCount?: number;
     summary?: string | null;
-  } | null = null;
+  }> = [];
 
   if (session?.companyId) {
     const company = await db.company.findUnique({
@@ -69,13 +69,16 @@ export default async function DashboardHomePage({
     }
 
     try {
-      const completed = await db.autonomousAgentLog.findFirst({
+      const completedRuns = await db.autonomousAgentLog.findMany({
         where: { companyId: session.companyId, actionType: "run_completed" },
         orderBy: { createdAt: "desc" },
+        take: 3,
         select: { runId: true, details: true, summary: true, createdAt: true },
       });
-      if (completed?.details && typeof completed.details === "object") {
-        const d = completed.details as {
+      recentRuns = completedRuns
+        .filter((completed) => completed?.details && typeof completed.details === "object")
+        .map((completed) => {
+          const d = completed.details as {
           processed?: number;
           created?: number;
           executed?: number;
@@ -83,7 +86,7 @@ export default async function DashboardHomePage({
           externalCandidates?: number;
           skipReasonsCount?: number;
         };
-        lastRun = {
+          return {
           runId: completed.runId,
           processed: Number(d.processed ?? 0),
           created: Number(d.created ?? 0),
@@ -93,8 +96,8 @@ export default async function DashboardHomePage({
           externalCandidates: typeof d.externalCandidates === "number" ? d.externalCandidates : undefined,
           skipReasonsCount: typeof d.skipReasonsCount === "number" ? d.skipReasonsCount : undefined,
           summary: completed.summary ?? undefined,
-        };
-      }
+          };
+        });
     } catch {
       // autonomousAgentLog may be missing if Prisma client is stale
     }
@@ -177,19 +180,27 @@ export default async function DashboardHomePage({
       <AnimeStagger className="overview-main" itemSelector="[data-animate-panel]" delayStep={110}>
         <section className="card overview-activity" data-animate-panel>
           <OverviewActivityHead />
-          {lastRun ? (
-            <div className="overview-activity__run overview-activity__run-content">
-              <p className="text-sm" style={{ margin: 0 }}>
-                <strong>{lastRun.processed}</strong> processed · <strong>{lastRun.created}</strong> risk cases created · <strong>{lastRun.executed}</strong> plans executed
-              </p>
-              <p className="text-xs muted" style={{ margin: "0.35rem 0 0 0" }}>
-                {formatRunTime(lastRun.at)}
-              </p>
+          {recentRuns.length > 0 ? (
+            <div className="overview-activity__run overview-activity__run-content stack-sm">
+              {recentRuns.map((run) => (
+                <div
+                  key={`${run.runId}-${run.at.toISOString()}`}
+                  className="card-flat"
+                  style={{ padding: "0.55rem 0.75rem" }}
+                >
+                  <p className="text-sm" style={{ margin: 0 }}>
+                    <strong>{run.processed}</strong> processed · <strong>{run.created}</strong> risk cases created · <strong>{run.executed}</strong> plans executed
+                  </p>
+                  <p className="text-xs muted" style={{ margin: "0.2rem 0 0 0" }}>
+                    {formatRunTime(run.at)}
+                  </p>
+                </div>
+              ))}
               <Link href="/dashboard/logs" className="btn secondary btn-sm overview-activity__run-link">
                 <span className="material-symbols-rounded btn__icon" aria-hidden>
                   visibility
                 </span>
-                View run
+                View runs
               </Link>
             </div>
           ) : (

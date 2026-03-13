@@ -40,6 +40,7 @@ type RiskCaseExpanded = {
 
 type PlanExpanded = {
   id: string;
+  createdAt: string;
   status: string;
   executionMode: string;
   actions: unknown;
@@ -868,7 +869,12 @@ export function AgentTracesClient() {
                                 {plan.riskCaseTriggerType && (
                                   <p className="text-xs muted" style={{ margin: 0 }}>{plan.riskCaseTriggerType}</p>
                                 )}
-                                <p className="text-xs muted" style={{ margin: 0 }}>Status: {plan.status} · Mode: {plan.executionMode}</p>
+                                <p className="text-xs muted" style={{ margin: 0 }}>
+                                  Status: {plan.status} · Mode: {plan.executionMode}
+                                </p>
+                                <p className="text-xs muted" style={{ margin: 0 }}>
+                                  Created: {formatTimestamp(plan.createdAt)}
+                                </p>
                                 {Array.isArray(plan.actions) && (plan.actions as unknown[]).length > 0 && (
                                   <ul className="stack-xs" style={{ margin: "0.5rem 0 0 0", paddingLeft: "1rem", listStyle: "none" }}>
                                     {(plan.actions as Record<string, unknown>[]).map((action, i) => (

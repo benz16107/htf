@@ -153,7 +153,7 @@ export default function IntegrationsClient({
               <p className="muted text-sm">Connect Zapier, then assign tools below.</p>
             </>
           )}
-          <ZapierMcpEmbed embedId={embedId} height="460px" className="zapier-embed-iframe" signUpEmail={userEmail} onMcpServerUrl={handleMcpServerUrl} onToolsChanged={fetchMcpTools} />
+          <ZapierMcpEmbed embedId={embedId} height="680px" className="zapier-embed-iframe" signUpEmail={userEmail} onMcpServerUrl={handleMcpServerUrl} onToolsChanged={fetchMcpTools} />
           {!isLocalhost && (
             <div className="card-flat stack-xs" style={{ marginTop: "0.75rem", padding: "0.6rem 0.75rem" }}>
               <p className="muted text-xs" style={{ margin: 0 }}>

@@ -391,7 +391,8 @@ export async function POST(req: Request) {
         runId = bodyRunId;
         activeRunStartedAt = existingRunStart?.createdAt ?? null;
       }
-      logRunCompleted = false;
+      // Even for continuous ticks, write run_completed snapshots so Overview can display latest run stats.
+      logRunCompleted = true;
     } else if (bodyContinuous) {
       const startedLog = await db.autonomousAgentLog.findFirst({
         where: { companyId: companyId, actionType: "run_started" },
@@ -427,7 +428,8 @@ export async function POST(req: Request) {
           details: { continuous: true, signalSources },
         });
       }
-      logRunCompleted = false;
+      // Even for continuous ticks, write run_completed snapshots so Overview can display latest run stats.
+      logRunCompleted = true;
     } else {
       runId = crypto.randomUUID();
     }

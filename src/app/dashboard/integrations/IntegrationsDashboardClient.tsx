@@ -186,7 +186,7 @@ export default function IntegrationsDashboardClient({
           ) : (
             <p className="muted text-sm">Connect below, then assign tools to input context or execution.</p>
           )}
-          <ZapierMcpEmbed embedId={embedId} height="460px" className="zapier-embed-iframe" signUpEmail={userEmail} onMcpServerUrl={handleMcpServerUrl} onToolsChanged={fetchMcpTools} />
+          <ZapierMcpEmbed embedId={embedId} height="680px" className="zapier-embed-iframe" signUpEmail={userEmail} onMcpServerUrl={handleMcpServerUrl} onToolsChanged={fetchMcpTools} />
           {!isLocalhost && (
             <div className="card-flat stack-xs" style={{ marginTop: "0.75rem", padding: "0.6rem 0.75rem" }}>
               <p className="muted text-xs" style={{ margin: 0 }}>If Continue is covered, scroll inside the box or Tab to focus it.</p>

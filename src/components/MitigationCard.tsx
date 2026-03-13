@@ -687,6 +687,7 @@ export function MitigationCard({
 
   const isExecuted = draftedPlan?.status === "EXECUTED";
   const isExpanded = archived ? archivedExpanded : activeExpanded;
+  const headerPlanCreatedAt = draftedPlan?.createdAt ?? rc.mitigationPlans?.[0]?.createdAt ?? null;
   /** Current case with a draft plan waiting for user to Approve & Fire — show warning so user knows confirmation is needed */
   const needsConfirmation = !archived && !!draftedPlan && draftedPlan.status !== "EXECUTED";
   const deferredReason = draftedPlan?.autonomousExecutionDeferred ?? null;
@@ -790,6 +791,11 @@ export function MitigationCard({
               Confidence: <strong style={{ color: "var(--foreground)" }}>{rc.confidenceLevel || "N/A"}</strong> · Financial Risk:{" "}
               <strong style={{ color: "var(--foreground)" }}>${(rc.financialImpact as any)?.revenueAtRiskUsd?.toLocaleString() || "N/A"}</strong>
             </p>
+            {headerPlanCreatedAt && (
+              <p className="muted text-xs" style={{ marginTop: "0.2rem" }}>
+                Plan created: {formatDeferredAt(headerPlanCreatedAt)}
+              </p>
+            )}
           </div>
         </div>
         <div className="row" style={{ alignItems: "center", gap: "0.5rem", flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
@@ -1043,6 +1049,11 @@ export function MitigationCard({
               </span>
             )}
           </h4>
+          {draftedPlan?.createdAt && (
+            <p className="text-xs muted" style={{ margin: 0 }}>
+              Plan created: {formatDeferredAt(draftedPlan.createdAt)}
+            </p>
+          )}
           {draftedPlan.summary && <p className="muted text-sm" style={{ margin: 0 }}>{draftedPlan.summary}</p>}
 
           {!isExecuted && deferredReason?.summary && (
